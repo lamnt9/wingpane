@@ -1,34 +1,29 @@
-/* Design Tokens - Auto-generated */
-/* Do not edit directly - modify tokens.json instead */
-
-/* === PRIMITIVES === */
+/* Design Tokens — Wingpane dark-mode-oled (ADR-003). Generated from tokens.json. */
 :root {
-
-}
-
-/* === SEMANTIC === */
-:root {
-  --color-primary: #6366F1;
+  color-scheme: dark;
+  --color-bg: #000000;
+  --color-surface-1: #0A0E27;
+  --color-surface-2: #121212;
+  --color-border: #5A6380;
+  --color-text: #F2F4FF;
+  --color-text-muted: #A3AED0;
+  --color-primary: #7AA2FF;
   --color-on-primary: #000000;
-  --color-secondary: #818CF8;
-  --color-on-secondary: #0F172A;
-  --color-accent: #059669;
-  --color-on-accent: #000000;
-  --color-background: #F5F3FF;
-  --color-foreground: #312E81;
-  --color-card: #FFFFFF;
-  --color-card-foreground: #312E81;
-  --color-muted: #EBEFF9;
-  --color-muted-foreground: #475569;
-  --color-border: #E0E7FF;
-  --color-destructive: #DC2626;
-  --color-on-destructive: #FFFFFF;
-  --color-ring: #6366F1;
+  --color-success: #3DDC97;
+  --color-on-success: #000000;
+  --color-warning: #FFB547;
+  --color-on-warning: #000000;
+  --color-danger: #FF8080;
+  --color-on-danger: #000000;
   --font-heading: Outfit, sans-serif;
   --font-body: "Work Sans", sans-serif;
-}
-
-/* === COMPONENTS === */
-:root {
-
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --radius-card: 12px;
+  --radius-pill: 999px;
+  --touch-min: 48px;
 }
