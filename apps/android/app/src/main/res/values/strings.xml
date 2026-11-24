@@ -1,1 +1,82 @@
-<resources><string name="app_name">Wingpane</string></resources>
+<resources>
+    <string name="app_name">Wingpane</string>
+    <string name="footer_version">Wingpane v0.1 · Protocol v1</string>
+    <string name="protocol_v1">Protocol v1</string>
+    <string name="settings_cd">Settings</string>
+
+    <!-- S1 Waiting -->
+    <string name="s1_title">Waiting for your Mac</string>
+    <string name="s1_body">Connect the USB cable and run Wingpane on your Mac.</string>
+    <string name="s1_full_copy">Waiting for your Mac — Connect the USB cable and run Wingpane on your Mac.</string>
+    <string name="action_setup_guide">Setup guide</string>
+
+    <!-- S1 Setup guide sheet -->
+    <string name="setup_guide_title">Setup guide</string>
+    <string name="setup_guide_subtitle">Follow these steps to connect your tablet to your Mac via USB</string>
+    <string name="setup_step_1_title">Enable Developer options and USB debugging on this tablet</string>
+    <string name="setup_step_1_body">Go to Android Settings &gt; About tablet &gt; tap Build number 7 times, then enable USB debugging in Developer options.</string>
+    <string name="setup_step_2_title">Accept “Allow USB debugging?” on the tablet</string>
+    <string name="setup_step_2_body">Tick “Always allow from this computer” for seamless zero-config reconnection when plugged in.</string>
+    <string name="setup_step_3_title">Run wingpane on your Mac</string>
+    <string name="setup_step_3_body">Start the desktop companion app or CLI daemon via Terminal or Spotlight.</string>
+    <string name="action_open_developer_options">Open Developer options</string>
+    <string name="action_done">Done</string>
+
+    <!-- S3 Handshaking -->
+    <string name="s3_title">Connecting to your Mac…</string>
+    <string name="action_cancel">Cancel</string>
+
+    <!-- S5a Version mismatch -->
+    <string name="s5a_badge">VERSION MISMATCH</string>
+    <string name="s5a_title">Update needed</string>
+    <string name="s5a_body_format">Mac uses protocol v%1$d, this app v1.</string>
+    <string name="s5a_full_copy_format">Update needed — Mac uses protocol v%1$d, this app v1.</string>
+    <string name="action_update_app">Update app</string>
+    <string name="action_try_again">Try again</string>
+    <string name="action_troubleshooting">Troubleshooting</string>
+
+    <!-- S5b Unsupported device -->
+    <string name="s5b_badge">UNSUPPORTED DEVICE</string>
+    <string name="s5b_title">This tablet can\'t decode H.264 video.</string>
+
+    <!-- S5c Busy -->
+    <string name="s5c_badge">BUSY</string>
+    <string name="s5c_title">Your Mac is already connected to another device.</string>
+
+    <!-- S5d Handshake failed -->
+    <string name="s5d_badge">CONNECTION FAILED</string>
+    <string name="s5d_title">Couldn\'t connect to your Mac.</string>
+
+    <!-- S5e Connection lost -->
+    <string name="s5e_badge">CONNECTION LOST</string>
+    <string name="s5e_title">Connection to your Mac was lost.</string>
+
+    <!-- Stream & HUD -->
+    <string name="hud_connected">Connected</string>
+    <string name="hud_open_cd">Open stream controls</string>
+    <string name="hud_close_cd">Close stream controls</string>
+    <string name="hud_high_latency_format">%1$d ms · High latency</string>
+    <string name="hud_live_diagnostics">LIVE DIAGNOSTICS</string>
+    <string name="hud_metric_fps_label">FPS</string>
+    <string name="hud_metric_fps_desc">Frames per second</string>
+    <string name="hud_metric_latency_label">LATENCY</string>
+    <string name="hud_metric_latency_desc">Round-trip latency</string>
+    <string name="hud_metric_mbps_label">MBPS</string>
+    <string name="hud_metric_mbps_desc">Stream bitrate</string>
+    <string name="hud_stream_mode">STREAM MODE</string>
+    <string name="hud_mode_display">Display</string>
+    <string name="hud_mode_pen">Pen</string>
+    <string name="hud_mode_pen_desc">Stylus &amp; pressure input</string>
+    <string name="hud_mode_trackpad">Trackpad</string>
+    <string name="hud_mode_trackpad_desc">Multi-touch gestures</string>
+    <string name="hud_coming_soon">Coming soon</string>
+    <string name="hud_active_badge">ACTIVE</string>
+    <string name="hud_lock_aspect_ratio">Lock aspect ratio</string>
+    <string name="hud_lock_aspect_ratio_desc">Maintain 16:10 native proportion</string>
+    <string name="hud_show_touches">Show touches</string>
+    <string name="hud_show_touches_desc">Render visual feedback circles</string>
+    <string name="hud_disconnect">Disconnect</string>
+    <string name="hud_disconnect_confirm">Tap again to disconnect</string>
+    <string name="reconnecting_title">Reconnecting…</string>
+    <string name="reconnecting_body">Connection interrupted. Attempting to restore video stream to your Mac (retrying every 1s)…</string>
+</resources>
