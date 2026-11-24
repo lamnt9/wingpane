@@ -142,10 +142,10 @@ class WingpaneClientTest {
         try {
             runCurrent()
             await(hello)
-            awaitClient(this, client) { client.state.value == ClientState.Rejected(RejectReason.VersionMismatch) }
+            awaitClient(this, client) { client.state.value == ClientState.Rejected(RejectReason.VersionMismatch, 1) }
             advanceTimeBy(20)
             runCurrent()
-            assertEquals(ClientState.Rejected(RejectReason.VersionMismatch), client.state.value)
+            assertEquals(ClientState.Rejected(RejectReason.VersionMismatch, 1), client.state.value)
         } finally { client.cancel(); srv.close() }
     }
 

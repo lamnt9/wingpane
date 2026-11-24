@@ -391,7 +391,7 @@ private fun ConnectionDiagramCard(
         "TABLET OLED"
     }
     val macScreenLabel = if (uiModel.screenId == ScreenId.S5A_VERSION_MISMATCH) {
-        "PROTOCOL v${uiModel.hostProtocolVersion ?: 2}"
+        uiModel.hostProtocolVersion?.let { "PROTOCOL v$it" } ?: "PROTOCOL ?"
     } else {
         null
     }

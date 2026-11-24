@@ -93,7 +93,6 @@ data class SetupGuideUiModel(
 
 object ClientStateMapper {
     const val HIGH_LATENCY_THRESHOLD_MS = 35L
-    const val DEFAULT_MISMATCH_HOST_VERSION = 2
 
     /**
      * Maps every [ClientState] to its exact [ScreenUiModel] and copy from the approved brief v0.3.
@@ -177,8 +176,10 @@ object ClientStateMapper {
     private fun mapRejected(rejected: ClientState.Rejected, hostVersionOverride: Int?): ScreenUiModel {
         return when (rejected.reason) {
             RejectReason.VersionMismatch -> {
-                val hostVer = hostVersionOverride ?: extractHostVersion(rejected) ?: DEFAULT_MISMATCH_HOST_VERSION
-                val body = "Mac uses protocol v$hostVer, this app v$PROTO_VERSION."
+                val hostVer = hostVersionOverride ?: rejected.hostVersion
+                // Never invent a version: the wire always carries it (RJ-1); guard anyway.
+                val body = if (hostVer != null) "Mac uses protocol v$hostVer, this app v$PROTO_VERSION."
+                    else "Your Mac uses a different protocol version, this app v$PROTO_VERSION."
                 val fullCopy = "Update needed — $body"
                 ScreenUiModel(
                     screenId = ScreenId.S5A_VERSION_MISMATCH,
@@ -234,25 +235,6 @@ object ClientStateMapper {
         severity = StatusSeverity.DANGER,
         liveRegion = LiveRegionPoliteness.POLITE,
     )
-
-    /**
-     * Probes for an optional `hostVersion` field on [ClientState.Rejected] or its reason if present.
-     */
-    private fun extractHostVersion(rejected: ClientState.Rejected): Int? {
-        for (target in listOf<Any>(rejected, rejected.reason)) {
-            try {
-                val field = target.javaClass.declaredFields.firstOrNull { it.name == "hostVersion" } ?: continue
-                field.isAccessible = true
-                when (val raw = field.get(target)) {
-                    is UShort -> return raw.toInt()
-                    is Number -> return raw.toInt()
-                }
-            } catch (_: Throwable) {
-                // Ignore reflection errors and fall back to default
-            }
-        }
-        return null
-    }
 
     /**
      * Status dot rule on collapsed HUD pill:

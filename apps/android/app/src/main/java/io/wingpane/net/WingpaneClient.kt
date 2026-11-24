@@ -20,7 +20,8 @@ sealed interface ClientState {
     data object Waiting : ClientState
     data object Handshaking : ClientState
     data class Active(val accept: ControlMessage.Accept) : ClientState
-    data class Rejected(val reason: RejectReason) : ClientState
+    /** [hostVersion] is set for VersionMismatch (RJ-1: the host sends its protocol version). */
+    data class Rejected(val reason: RejectReason, val hostVersion: Int? = null) : ClientState
     data object HandshakeFailed : ClientState
     data object Reconnecting : ClientState
     data object Lost : ClientState
@@ -38,7 +39,7 @@ internal class ConnectionStateMachine private constructor(private val model: Mod
         data object TcpConnected : Event
         data object HelloSent : Event
         data class AcceptReceived(val accept: ControlMessage.Accept) : Event
-        data class RejectReceived(val reason: RejectReason) : Event
+        data class RejectReceived(val reason: RejectReason, val hostVersion: Int? = null) : Event
         data object HandshakeFailure : Event
         data class TransportLost(val nowNs: Long) : Event
         data class PongTimeout(val nowNs: Long) : Event
@@ -60,7 +61,7 @@ internal class ConnectionStateMachine private constructor(private val model: Mod
             Event.TcpConnected -> Result(m.copy(state = ClientState.Handshaking), listOf(Effect.SendHello))
             Event.HelloSent -> Result(m.copy(state = ClientState.Handshaking))
             is Event.AcceptReceived -> Result(Model(ClientState.Active(event.accept), true, null))
-            is Event.RejectReceived -> Result(m.copy(state = ClientState.Rejected(event.reason), lossStartedAtNs = null))
+            is Event.RejectReceived -> Result(m.copy(state = ClientState.Rejected(event.reason, event.hostVersion), lossStartedAtNs = null))
             Event.HandshakeFailure -> Result(m.copy(state = ClientState.HandshakeFailed))
             is Event.TransportLost, is Event.PongTimeout -> {
                 val timestamp = when (event) { is Event.TransportLost -> event.nowNs; is Event.PongTimeout -> event.nowNs; else -> error("unreachable") }
@@ -238,7 +239,7 @@ class WingpaneClient(
                                         reduce(ConnectionStateMachine.Event.AcceptReceived(message))
                                     }
                                     is ControlMessage.Reject -> {
-                                        reduce(ConnectionStateMachine.Event.RejectReceived(message.reason))
+                                        reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))
                                         return@clientLoop
                                     }
                                     else -> Unit
@@ -292,7 +293,7 @@ class WingpaneClient(
                                         }
                                     }
                                     is ControlMessage.Reject -> {
-                                        reduce(ConnectionStateMachine.Event.RejectReceived(message.reason))
+                                        reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))
                                         break@activeRead
                                     }
                                     else -> Unit

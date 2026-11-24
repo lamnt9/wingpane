@@ -86,7 +86,7 @@ class ClientStateMappingTest {
 
     @Test
     fun `Rejected VersionMismatch maps to S5a with formatted protocol version copy`() {
-        val modelDefault = ClientStateMapper.map(ClientState.Rejected(RejectReason.VersionMismatch))
+        val modelDefault = ClientStateMapper.map(ClientState.Rejected(RejectReason.VersionMismatch, hostVersion = 2))
         assertEquals(ScreenId.S5A_VERSION_MISMATCH, modelDefault.screenId)
         assertEquals("Update needed", modelDefault.title)
         assertEquals("Mac uses protocol v2, this app v1.", modelDefault.body)
@@ -101,6 +101,10 @@ class ClientStateMappingTest {
         )
         assertEquals("Mac uses protocol v4, this app v1.", modelV4.body)
         assertEquals("Update needed — Mac uses protocol v4, this app v1.", modelV4.briefCopy)
+
+        // Never invent a version number when none was received.
+        val unknown = ClientStateMapper.map(ClientState.Rejected(RejectReason.VersionMismatch))
+        assertEquals("Your Mac uses a different protocol version, this app v1.", unknown.body)
     }
 
     @Test
