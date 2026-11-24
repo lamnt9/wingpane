@@ -1,0 +1,27 @@
+# Target directories
+/target/
+**/target/
+
+# Node / Tauri UI
+node_modules/
+**/dist/
+
+# Android
+.gradle/
+build/
+**/build/
+*.apk
+*.aab
+local.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# Session manager working states
+.session/

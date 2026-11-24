@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/wingpane-proto",
+    "crates/wingpane-core",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Lam Nguyen <lamnt9@users.noreply.github.com>"]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+postcard = { version = "1.0", features = ["alloc"] }
+anyhow = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.36", features = ["full"] }
+tracing = "0.1"
+

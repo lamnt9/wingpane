@@ -1,0 +1,15 @@
+[package]
+name = "wingpane-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core session, transport, and input smoothing for Wingpane"
+
+[dependencies]
+wingpane-proto = { path = "../wingpane-proto" }
+serde.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
