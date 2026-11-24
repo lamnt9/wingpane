@@ -2,7 +2,7 @@
 
 ## Current result
 
-Verified on macOS 26.6 (build 25G72) with Swift 6.2.4: release build succeeds with no warnings; the final CLI run creates display ID 6 at 2560 × 1600, 60 Hz, and `CGGetOnlineDisplayList` rises from 1 to 2, then returns to 1 after teardown. A separate `--hidpi` run also created a display and reported the same pixel dimensions. The private classes are declared in Objective-C headers and imported by `WingpaneDisplayKit`. A selector inventory made with the local Objective-C runtime showed that `hiDPI` belongs on settings, not on the descriptor.
+Verified on macOS 26.6 (build 25G72) with Swift 6.2.4: release build succeeds with no warnings; the final CLI run creates a display at 2560 × 1600, 60 Hz, and `CGGetOnlineDisplayList` rises from 1 to 2, then returns to 1 after teardown. For `--hidpi --width 1280 --height 800`, the descriptor now advertises 2560 × 1600 maximum pixels; a live `wp-vdisplay` run reported `2560x1600` backing pixels. The private classes are declared in Objective-C headers and imported by `WingpaneDisplayKit`. A selector inventory made with the local Objective-C runtime showed that `hiDPI` belongs on settings, not on the descriptor.
 
 ## Display geometry
 
@@ -18,5 +18,6 @@ The local standalone CLI succeeded without a configured entitlement or an intera
 - This package targets macOS 13 or later. Behavior on earlier supported macOS versions is unknown; only macOS 26.6 was exercised.
 - Creation and settings application are checked through the private API; display count is sampled with `CGGetOnlineDisplayList` before/after creation and polled for up to two seconds after teardown.
 - The C ABI registry retains displays created through `wp_vd_create` until `wp_vd_destroy` is called. A process must not lose the returned ID before destroying it.
-- No Rust integration, capture, encoding, hot-plug recovery, or multi-display policy is included.
-- Screen-recording permission requirements for future capture are unknown and were not tested here.
+- B2 adds `WingpaneCaptureKit` using ScreenCaptureKit and VideoToolbox. A 10-second live run produced an Annex-B H.264 Main stream at 2560 × 1600 with `has_b_frames=0`; ScreenCaptureKit delivered 579 frames and the encoder emitted 579 frames (57.9 fps). Encode latency was p50 9.475 ms, p95 9.992 ms, max 42.849 ms. VideoToolbox accepted the requested low-latency rate-control session option. This run did not establish behavior on other macOS releases or machines.
+- No Rust integration, hot-plug recovery, or multi-display policy is included. `forceKeyframe()` maps to VideoToolbox's per-frame force-keyframe option.
+- Screen recording was available to the terminal during the B2 live run; the missing-permission path is implemented but was not exercised.

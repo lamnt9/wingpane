@@ -64,8 +64,9 @@ public final class VirtualDisplay {
         descriptor.productID = 0x0001
         descriptor.serialNum = UInt32.random(in: 1...UInt32.max)
         descriptor.sizeInMillimeters = CGSize(width: 600, height: 375)
-        descriptor.maxPixelsWide = UInt(width)
-        descriptor.maxPixelsHigh = UInt(height)
+        // A HiDPI mode has logical dimensions width × height and a 2× backing.
+        descriptor.maxPixelsWide = UInt(width * (hiDPI ? 2 : 1))
+        descriptor.maxPixelsHigh = UInt(height * (hiDPI ? 2 : 1))
 
         guard let display = CGVirtualDisplay(descriptor: descriptor) else {
             throw VirtualDisplayError.creationFailed
