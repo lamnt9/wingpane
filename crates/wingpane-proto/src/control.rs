@@ -33,6 +33,16 @@ pub enum ControlMessage {
     Ping(u64),
     Pong(u64),
     Disconnect,
+    Reject(RejectReason),
+}
+
+/// Why the host declined a connection. Variant order is part of the wire format.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectReason {
+    VersionMismatch { host_version: u16 },
+    UnsupportedCodec,
+    InvalidHello,
+    Busy,
 }
 
 /// Supported low-latency video codecs.

@@ -6,7 +6,7 @@ mod control;
 mod frame;
 mod input;
 
-pub use control::{ControlMessage, Mode, VideoCodec, PROTO_VERSION};
+pub use control::{ControlMessage, Mode, RejectReason, VideoCodec, PROTO_VERSION};
 pub use frame::{encode_frame, FrameDecoder, FrameError, Packet, VideoPacket, MAX_FRAME_LEN};
 pub use input::{GestureKind, InputEvent, InputPacket, TouchPhase};
 
@@ -43,6 +43,10 @@ mod tests {
             ControlMessage::Ping(1),
             ControlMessage::Pong(2),
             ControlMessage::Disconnect,
+            ControlMessage::Reject(RejectReason::VersionMismatch { host_version: 1 }),
+            ControlMessage::Reject(RejectReason::UnsupportedCodec),
+            ControlMessage::Reject(RejectReason::InvalidHello),
+            ControlMessage::Reject(RejectReason::Busy),
         ];
         for c in controls {
             roundtrip(Packet::Control(c));
@@ -142,5 +146,156 @@ mod tests {
         let mut bytes = Vec::new();
         encode_frame(&Packet::Control(ControlMessage::Ping(1)), &mut bytes).unwrap();
         assert_eq!(bytes, [0x03, 0x00, 0x00, 0x00, 0x00, 0x04, 0x01]);
+    }
+    #[test]
+    fn reject_version_mismatch_golden_wire_bytes() {
+        let mut bytes = Vec::new();
+        encode_frame(
+            &Packet::Control(ControlMessage::Reject(RejectReason::VersionMismatch {
+                host_version: 1,
+            })),
+            &mut bytes,
+        )
+        .unwrap();
+        assert_eq!(bytes, [0x04, 0, 0, 0, 0, 7, 0, 1]);
+    }
+}
+
+/// Canonical packet set used by the checked-in Kotlin interoperability vectors.
+#[doc(hidden)]
+pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
+    use alloc::{string::String, vec, vec::Vec};
+    let controls = vec![
+        (
+            "control_hello",
+            ControlMessage::Hello {
+                version: PROTO_VERSION,
+                device_name: String::from("Wingpane"),
+                screen_size_px: (2560, 1600),
+                supported_codecs: vec![VideoCodec::H264, VideoCodec::Hevc],
+                refresh_rate_hz: 120,
+            },
+        ),
+        (
+            "control_accept",
+            ControlMessage::Accept {
+                selected_mode: Mode::GraphicsTablet,
+                virtual_display_spec: Some((1920, 1080, 60)),
+                selected_codec: VideoCodec::H264,
+                bitrate_kbps: 12000,
+            },
+        ),
+        (
+            "control_set_mode",
+            ControlMessage::SetMode(Mode::TrackpadKeyboard),
+        ),
+        ("control_request_keyframe", ControlMessage::RequestKeyframe),
+        ("control_ping", ControlMessage::Ping(0x0102_0304_0506_0708)),
+        ("control_pong", ControlMessage::Pong(0x0807_0605_0403_0201)),
+        ("control_disconnect", ControlMessage::Disconnect),
+        (
+            "reject_version_mismatch",
+            ControlMessage::Reject(RejectReason::VersionMismatch { host_version: 1 }),
+        ),
+        (
+            "reject_unsupported_codec",
+            ControlMessage::Reject(RejectReason::UnsupportedCodec),
+        ),
+        (
+            "reject_invalid_hello",
+            ControlMessage::Reject(RejectReason::InvalidHello),
+        ),
+        ("reject_busy", ControlMessage::Reject(RejectReason::Busy)),
+    ];
+    let mut packets: Vec<(&'static str, Packet)> = controls
+        .into_iter()
+        .map(|(n, c)| (n, Packet::Control(c)))
+        .collect();
+    packets.push((
+        "video_keyframe",
+        Packet::Video(VideoPacket {
+            frame_seq: 300,
+            pts_us: 5_000_000_123,
+            is_keyframe: true,
+            payload: vec![0, 0, 0, 1, 0x67],
+        }),
+    ));
+    let events = vec![
+        (
+            "input_pen",
+            InputEvent::Pen {
+                x: 0.125,
+                y: 0.875,
+                pressure: 0.75,
+                tilt_x: -37,
+                tilt_y: 22,
+                is_down: true,
+                is_hover: false,
+                button_mask: 5,
+                timestamp_us: 5_000_000_123,
+            },
+        ),
+        (
+            "input_touch",
+            InputEvent::Touch {
+                pointer_id: 7,
+                x: 0.25,
+                y: 0.625,
+                phase: TouchPhase::Move,
+            },
+        ),
+        (
+            "input_pointer_delta",
+            InputEvent::PointerDelta {
+                dx: -12.5,
+                dy: 3.25,
+            },
+        ),
+        ("input_scroll", InputEvent::Scroll { dx: 1.5, dy: -2.75 }),
+        (
+            "input_gesture",
+            InputEvent::Gesture(GestureKind::PinchZoom(1.25)),
+        ),
+        (
+            "input_keyboard",
+            InputEvent::Keyboard {
+                usb_hid_usage: 0x1234,
+                is_down: true,
+                modifiers: 5,
+            },
+        ),
+    ];
+    for (name, event) in events {
+        packets.push((
+            name,
+            Packet::Input(InputPacket {
+                seq: 300,
+                ts_us: 5_000_000_123,
+                event,
+            }),
+        ));
+    }
+    packets
+}
+
+#[cfg(test)]
+mod golden_test {
+    use super::*;
+    use alloc::{string::String, vec::Vec};
+    #[test]
+    fn golden_vectors_are_current() {
+        let mut actual = String::new();
+        for (name, packet) in golden_packets() {
+            let mut bytes = Vec::new();
+            encode_frame(&packet, &mut bytes).unwrap();
+            actual.push_str(name);
+            actual.push(' ');
+            for byte in bytes {
+                use core::fmt::Write;
+                write!(&mut actual, "{byte:02x}").unwrap();
+            }
+            actual.push('\n');
+        }
+        assert_eq!(actual, include_str!("../golden/packets.txt"));
     }
 }
