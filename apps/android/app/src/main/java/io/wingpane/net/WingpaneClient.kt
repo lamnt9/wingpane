@@ -26,6 +26,72 @@ sealed interface ClientState {
     data object Lost : ClientState
 }
 
+/** Pure connection policy. The loss timestamp belongs to the episode, not an attempt. */
+internal class ConnectionStateMachine private constructor(private val model: Model) {
+    internal data class Model(
+        val state: ClientState = ClientState.Waiting,
+        val everActive: Boolean = false,
+        val lossStartedAtNs: Long? = null,
+        val waitingStartedAtNs: Long? = null,
+    )
+    internal sealed interface Event {
+        data object TcpConnected : Event
+        data object HelloSent : Event
+        data class AcceptReceived(val accept: ControlMessage.Accept) : Event
+        data class RejectReceived(val reason: RejectReason) : Event
+        data object HandshakeFailure : Event
+        data class TransportLost(val nowNs: Long) : Event
+        data class PongTimeout(val nowNs: Long) : Event
+        data class Tick(val nowNs: Long) : Event
+        data object UserCancel : Event
+        data object UserRetry : Event
+    }
+    internal sealed interface Effect {
+        data object Connect : Effect
+        data object SendHello : Effect
+        data class ScheduleRetry(val delayMs: Long) : Effect
+    }
+    internal data class Result(val model: Model, val effects: List<Effect> = emptyList())
+
+    fun reduce(event: Event): Result {
+        val now = (event as? Event.Tick)?.nowNs
+        val m = model
+        return when (event) {
+            Event.TcpConnected -> Result(m.copy(state = ClientState.Handshaking), listOf(Effect.SendHello))
+            Event.HelloSent -> Result(m.copy(state = ClientState.Handshaking))
+            is Event.AcceptReceived -> Result(Model(ClientState.Active(event.accept), true, null))
+            is Event.RejectReceived -> Result(m.copy(state = ClientState.Rejected(event.reason), lossStartedAtNs = null))
+            Event.HandshakeFailure -> Result(m.copy(state = ClientState.HandshakeFailed))
+            is Event.TransportLost, is Event.PongTimeout -> {
+                val timestamp = when (event) { is Event.TransportLost -> event.nowNs; is Event.PongTimeout -> event.nowNs; else -> error("unreachable") }
+                val start = m.lossStartedAtNs ?: timestamp
+                Result(m.copy(state = if (m.everActive) ClientState.Reconnecting else ClientState.Waiting,
+                    lossStartedAtNs = start))
+            }
+            is Event.Tick -> {
+                val start = m.lossStartedAtNs
+                if (m.everActive && start != null && event.nowNs - start >= LOST_AFTER_NS)
+                    Result(m.copy(state = ClientState.Lost))
+                else {
+                    val waitingStart = m.waitingStartedAtNs ?: event.nowNs
+                    Result(m.copy(state = if (m.everActive && start != null) ClientState.Reconnecting else ClientState.Waiting,
+                        waitingStartedAtNs = waitingStart),
+                        listOf(Effect.ScheduleRetry(if (event.nowNs - (start ?: waitingStart) >= SLOW_RETRY_AFTER_NS) 2_000 else 1_000)))
+                }
+            }
+            Event.UserCancel -> Result(Model())
+            Event.UserRetry -> if (m.state is ClientState.Rejected || m.state is ClientState.HandshakeFailed || m.state is ClientState.Lost)
+                Result(Model(), listOf(Effect.Connect)) else Result(m)
+        }
+    }
+    fun snapshot() = model
+    companion object {
+        const val LOST_AFTER_NS = 10_000_000_000L
+        const val SLOW_RETRY_AFTER_NS = 30_000_000_000L
+        fun create(model: Model = Model()) = ConnectionStateMachine(model)
+    }
+}
+
 /** TCP client for one Wingpane session. Socket creation and the monotonic clock are injectable. */
 class WingpaneClient(
     private val deviceName: () -> String = { Build.MODEL ?: "Android" },
@@ -83,36 +149,43 @@ class WingpaneClient(
         if (job?.isActive == true) return
         stopped.set(false)
         job = scope.launch clientLoop@ {
-            var reconnectStartedAt: Long? = null
-            var everActive = false
+            var machine = ConnectionStateMachine.Model()
+            fun reduce(event: ConnectionStateMachine.Event): ConnectionStateMachine.Model {
+                val next = ConnectionStateMachine.create(machine).reduce(event).model
+                machine = next
+                mutableState.value = next.state
+                return next
+            }
+            fun lossStartedAt() = machine.lossStartedAtNs
+            fun everActive() = machine.everActive
             var lostWatchdog: Job? = null
             fun watchLost(startedAt: Long) {
                 lostWatchdog?.cancel()
                 lostWatchdog = launch {
                     val remaining = (LOST_AFTER_NS - (nanoTime() - startedAt)).coerceAtLeast(0)
                     delay((remaining / 1_000_000L).coerceAtLeast(1))
-                    if (everActive && reconnectStartedAt == startedAt && !stopped.get()) {
-                        mutableState.value = ClientState.Lost
+                    if (everActive() && lossStartedAt() == startedAt && !stopped.get()) {
+                        reduce(ConnectionStateMachine.Event.Tick(nanoTime()))
                         try { socket?.close() } catch (_: Throwable) { }
                     }
                 }
             }
             while (isActive && !stopped.get()) {
-                val reconnectStart = reconnectStartedAt
+                val reconnectStart = lossStartedAt()
                 if (reconnectStart != null) {
                     val elapsed = (nanoTime() - reconnectStart).coerceAtLeast(0)
-                    if (everActive && elapsed >= LOST_AFTER_NS) {
-                        mutableState.value = ClientState.Lost
+                    if (everActive() && elapsed >= LOST_AFTER_NS) {
+                        reduce(ConnectionStateMachine.Event.Tick(nanoTime()))
                         return@clientLoop
                     }
-                    mutableState.value = if (everActive) ClientState.Reconnecting else ClientState.Waiting
+                    reduce(ConnectionStateMachine.Event.Tick(nanoTime()))
                     delay(if (elapsed >= SLOW_RETRY_AFTER_NS) 2_000 else 1_000)
-                    if (everActive && nanoTime() - reconnectStart >= LOST_AFTER_NS) {
-                        mutableState.value = ClientState.Lost
+                    if (everActive() && nanoTime() - reconnectStart >= LOST_AFTER_NS) {
+                        reduce(ConnectionStateMachine.Event.Tick(nanoTime()))
                         return@clientLoop
                     }
                 } else {
-                    mutableState.value = ClientState.Waiting
+                    reduce(ConnectionStateMachine.Event.Tick(nanoTime()))
                 }
 
                 var activeAccept: ControlMessage.Accept? = null
@@ -129,7 +202,7 @@ class WingpaneClient(
                             width.toUInt() to height.toUInt(), supportedCodecs(), refreshRateHz().toUInt()
                         )))
                     }
-                    mutableState.value = ClientState.Handshaking
+                    reduce(ConnectionStateMachine.Event.TcpConnected)
                     val decoder = FrameDecoder()
                     val input = thisSocket.getInputStream()
                     val reads = Channel<ByteArray>(Channel.UNLIMITED)
@@ -140,19 +213,18 @@ class WingpaneClient(
                     }, "Wingpane-SocketReader").apply { isDaemon = true; start() }
                     val handshakeDeadline = nanoTime() + HANDSHAKE_TIMEOUT_NS
                     while (activeAccept == null && !stopped.get()) {
-                        val reconnectStart = reconnectStartedAt
-                        if (everActive && reconnectStart != null && nanoTime() - reconnectStart >= LOST_AFTER_NS) {
-                            mutableState.value = ClientState.Lost
+                        val reconnectStart = lossStartedAt()
+                        if (everActive() && reconnectStart != null && nanoTime() - reconnectStart >= LOST_AFTER_NS) {
+                            reduce(ConnectionStateMachine.Event.Tick(nanoTime()))
                             return@clientLoop
                         }
                         val remainingMs = ((handshakeDeadline - nanoTime()).coerceAtLeast(0) / 1_000_000L)
                         if (remainingMs == 0L) {
-                            if (everActive) {
-                                mutableState.value = ClientState.Reconnecting
-                                reconnectStartedAt = reconnectStartedAt ?: nanoTime()
+                            if (everActive()) {
+                                reduce(ConnectionStateMachine.Event.TransportLost(nanoTime()))
                                 break
                             }
-                            mutableState.value = ClientState.HandshakeFailed
+                            reduce(ConnectionStateMachine.Event.HandshakeFailure)
                             return@clientLoop
                         }
                         val bytes = withTimeoutOrNull(remainingMs) { reads.receive() } ?: continue
@@ -163,12 +235,10 @@ class WingpaneClient(
                                 is Packet.Control -> when (val message = packet.message) {
                                     is ControlMessage.Accept -> {
                                         activeAccept = message
-                                        everActive = true
-                                        reconnectStartedAt = null
-                                        mutableState.value = ClientState.Active(message)
+                                        reduce(ConnectionStateMachine.Event.AcceptReceived(message))
                                     }
                                     is ControlMessage.Reject -> {
-                                        mutableState.value = ClientState.Rejected(message.reason)
+                                        reduce(ConnectionStateMachine.Event.RejectReceived(message.reason))
                                         return@clientLoop
                                     }
                                     else -> Unit
@@ -178,7 +248,7 @@ class WingpaneClient(
                         }
                     }
                     if (activeAccept == null) {
-                        reconnectStartedAt = reconnectStartedAt ?: nanoTime()
+                        reduce(ConnectionStateMachine.Event.TransportLost(nanoTime()))
                         continue
                     }
                     val oldestUnansweredPing = AtomicLong(0L)
@@ -199,9 +269,8 @@ class WingpaneClient(
                             val oldest = oldestUnansweredPing.get()
                             val now = nanoTime()
                             if (oldest != 0L && now - oldest >= PONG_TIMEOUT_NS) {
-                                mutableState.value = ClientState.Reconnecting
-                                reconnectStartedAt = now
-                                watchLost(now)
+                                val loss = reduce(ConnectionStateMachine.Event.PongTimeout(now)).lossStartedAtNs ?: now
+                                watchLost(loss)
                                 try { thisSocket.close() } catch (_: Throwable) { }
                                 return@launch
                             }
@@ -223,7 +292,7 @@ class WingpaneClient(
                                         }
                                     }
                                     is ControlMessage.Reject -> {
-                                        mutableState.value = ClientState.Rejected(message.reason)
+                                        reduce(ConnectionStateMachine.Event.RejectReceived(message.reason))
                                         break@activeRead
                                     }
                                     else -> Unit
@@ -233,21 +302,21 @@ class WingpaneClient(
                         }
                     } } finally { pingTicker.cancel(); pongWatchdog.cancel() }
                     if (mutableState.value is ClientState.Lost) return@clientLoop
-                    if (reconnectStartedAt == null && !stopped.get()) reconnectStartedAt = nanoTime()
+                    if (lossStartedAt() == null && !stopped.get()) reduce(ConnectionStateMachine.Event.TransportLost(nanoTime()))
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {
                     if (mutableState.value is ClientState.Lost) return@clientLoop
-                    if (!stopped.get() && mutableState.value is ClientState.Handshaking && !everActive) {
-                        mutableState.value = ClientState.HandshakeFailed
+                    if (!stopped.get() && mutableState.value is ClientState.Handshaking && !everActive()) {
+                        reduce(ConnectionStateMachine.Event.HandshakeFailure)
                         return@clientLoop
                     }
                     if (!stopped.get() && mutableState.value !is ClientState.HandshakeFailed && mutableState.value !is ClientState.Rejected) {
-                        val wasActive = everActive
+                        val wasActive = everActive()
                         if (wasActive) mutableState.value = ClientState.Reconnecting
-                        if (reconnectStartedAt == null) {
-                            reconnectStartedAt = nanoTime()
-                            if (everActive) watchLost(reconnectStartedAt!!)
+                        if (lossStartedAt() == null) {
+                            val loss = reduce(ConnectionStateMachine.Event.TransportLost(nanoTime())).lossStartedAtNs!!
+                            if (everActive()) watchLost(loss)
                         }
                     }
                 } finally {

@@ -22,6 +22,40 @@ class WingpaneClientTest {
 
     private fun server(handler: (Socket, Int) -> Unit): FakeServer = FakeServer(handler)
 
+    @Test fun reducerKeepsOneLossEpisodeAcrossFailedTcpAttempts() {
+        var m = ConnectionStateMachine.Model(ClientState.Active(accept.message as ControlMessage.Accept), true)
+        fun event(e: ConnectionStateMachine.Event) { m = ConnectionStateMachine.create(m).reduce(e).model }
+        event(ConnectionStateMachine.Event.PongTimeout(1_000))
+        assertEquals(1_000L, m.lossStartedAtNs)
+        event(ConnectionStateMachine.Event.TcpConnected)
+        event(ConnectionStateMachine.Event.TransportLost(4_000))
+        assertEquals(1_000L, m.lossStartedAtNs)
+        event(ConnectionStateMachine.Event.Tick(10_000_000_999L))
+        assertEquals(ClientState.Reconnecting, m.state)
+        event(ConnectionStateMachine.Event.Tick(10_000_001_000L))
+        assertEquals(ClientState.Lost, m.state)
+    }
+
+    @Test fun reducerWaitsForeverAndSwitchesRetryCadenceAtThirtySeconds() {
+        var m = ConnectionStateMachine.Model()
+        m = ConnectionStateMachine.create(m).reduce(ConnectionStateMachine.Event.Tick(0)).model
+        var r = ConnectionStateMachine.create(m).reduce(ConnectionStateMachine.Event.Tick(31_000_000_000L))
+        assertEquals(ClientState.Waiting, r.model.state)
+        assertEquals(ConnectionStateMachine.Effect.ScheduleRetry(2_000), r.effects.single())
+    }
+
+    @Test fun reducerCancelAndRetryTransitions() {
+        for (state in listOf(ClientState.Handshaking, ClientState.Reconnecting)) {
+            val model = ConnectionStateMachine.Model(state, state == ClientState.Reconnecting, if (state == ClientState.Reconnecting) 5L else null)
+            assertEquals(ClientState.Waiting, ConnectionStateMachine.create(model).reduce(ConnectionStateMachine.Event.UserCancel).model.state)
+        }
+        for (state in listOf(ClientState.Rejected(RejectReason.VersionMismatch), ClientState.HandshakeFailed, ClientState.Lost)) {
+            val result = ConnectionStateMachine.create(ConnectionStateMachine.Model(state, true, 4L)).reduce(ConnectionStateMachine.Event.UserRetry)
+            assertEquals(ClientState.Waiting, result.model.state)
+            assertEquals(ConnectionStateMachine.Effect.Connect, result.effects.single())
+        }
+    }
+
     private fun client(testScope: kotlinx.coroutines.test.TestScope, server: FakeServer, inputClock: () -> Long = { 123_456L }) = WingpaneClient(
         deviceName = { "Unit Test" }, screenSizePx = { 1920 to 1080 },
         supportedCodecs = { listOf(VideoCodec.H264) }, refreshRateHz = { 60 },
@@ -128,30 +162,20 @@ class WingpaneClientTest {
         } finally { client.cancel(); srv.close() }
     }
 
-    @Test fun missingPongReconnectsThenBecomesLostAfterTenSeconds() = runTest {
-        val ping = CountDownLatch(1)
-        val srv = server { socket, index ->
-            readPacket(socket)
-            if (index == 1) socket.getOutputStream().write(accept.encodeFrame()) else socket.close()
-            while (true) {
-                val packet = readPacket(socket)
-                if (packet is Packet.Control && packet.message is ControlMessage.Ping) ping.countDown()
-            }
+    @Test fun missingPongAndRepeatedFailedTcpAttemptsLoseTenSecondsFromFirstLoss() {
+        var m = ConnectionStateMachine.Model(ClientState.Active(accept.message as ControlMessage.Accept), true)
+        fun event(e: ConnectionStateMachine.Event) { m = ConnectionStateMachine.create(m).reduce(e).model }
+        event(ConnectionStateMachine.Event.PongTimeout(100_000_000L))
+        assertEquals(ClientState.Reconnecting, m.state)
+        repeat(12) { attempt ->
+            event(ConnectionStateMachine.Event.TcpConnected)
+            event(ConnectionStateMachine.Event.TransportLost(200_000_000L + attempt * 1_000_000_000L))
         }
-        val client = client(this, srv)
-        try {
-            runCurrent()
-            awaitClient(this, client) { client.state.value is ClientState.Active }
-            advanceTimeBy(500)
-            runCurrent()
-            await(ping)
-            advanceTimeBy(2_100)
-            runCurrent()
-            assertEquals(ClientState.Reconnecting, client.state.value)
-            advanceTimeBy(10_001)
-            runCurrent()
-            assertEquals(ClientState.Lost, client.state.value)
-        } finally { client.cancel(); srv.close() }
+        assertEquals(100_000_000L, m.lossStartedAtNs)
+        event(ConnectionStateMachine.Event.Tick(10_099_999_999L))
+        assertEquals(ClientState.Reconnecting, m.state)
+        event(ConnectionStateMachine.Event.Tick(10_100_000_000L))
+        assertEquals(ClientState.Lost, m.state)
     }
 
     @Test fun closedServerConnectionReconnectsAndAcceptsAgain() = runTest {
