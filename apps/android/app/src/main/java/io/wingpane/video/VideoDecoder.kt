@@ -82,10 +82,14 @@ class VideoDecoder(
                 if (Build.VERSION.SDK_INT >= 23) setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt())
             }
             val info = MediaCodecListCompat.avcDecoderInfo() ?: return
-            if (Build.VERSION.SDK_INT >= 30 && info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-                    .isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)) {
-                format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-            }
+            val lowLatencySupported = Build.VERSION.SDK_INT >= 30 && info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                .isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)
+            if (lowLatencySupported) format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            // Vendor keys: output in decode order without DPB buffering. Ignored by codecs that don't know them.
+            format.setInteger("vendor.qti-ext-dec-low-latency.enable", 1)
+            format.setInteger("vendor.qti-ext-dec-picture-order.enable", 1)
+            format.setInteger("vendor.low-latency.enable", 1)
+            android.util.Log.i("WingpaneDecoder", "codec=${info.name} hw=${info.isHardwareAccelerated} featureLowLatency=$lowLatencySupported")
             codec = MediaCodec.createByCodecName(info.name).also { c ->
                 c.setCallback(object : MediaCodec.Callback() {
                     override fun onInputBufferAvailable(c: MediaCodec, index: Int) = drain(index)
