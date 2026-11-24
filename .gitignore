@@ -29,3 +29,7 @@ vendor/
 
 # Session manager working states
 .session/
+
+# SwiftPM
+.build/
+.swiftpm/
