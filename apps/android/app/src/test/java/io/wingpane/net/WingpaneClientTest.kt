@@ -6,7 +6,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withContext
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
@@ -32,10 +31,20 @@ class WingpaneClientTest {
         nanoTime = { testScope.testScheduler.currentTime * 1_000_000L },
     ).also { it.connect("127.0.0.1", server.port) }
 
-    private suspend fun await(latch: CountDownLatch) {
-        assertTrue("server did not observe expected packet", withContext(Dispatchers.IO) {
-            latch.await(5, TimeUnit.SECONDS)
-        })
+    private fun await(latch: CountDownLatch) {
+        assertTrue("server did not observe expected packet", latch.await(5, TimeUnit.SECONDS))
+        // The socket reader is deliberately a real blocking thread, independent of runTest's clock.
+        // Let it enqueue bytes written immediately before the server releases its latch.
+        Thread.sleep(20)
+    }
+
+    private fun awaitClient(testScope: kotlinx.coroutines.test.TestScope, client: WingpaneClient, condition: () -> Boolean) {
+        repeat(100) {
+            testScope.runCurrent()
+            if (condition()) return
+            Thread.sleep(5)
+        }
+        fail("client state did not settle: ${client.state.value}")
     }
 
     @Test fun acceptMovesClientToActive() = runTest {
@@ -44,14 +53,16 @@ class WingpaneClientTest {
             assertIsHello(readPacket(socket))
             socket.getOutputStream().write(accept.encodeFrame())
             hello.countDown()
+            try { readPacket(socket) } catch (_: Throwable) { }
         }
         val client = client(this, srv)
         try {
             runCurrent()
             await(hello)
+            awaitClient(this, client) { client.state.value is ClientState.Active }
             advanceTimeBy(20)
             runCurrent()
-            assertTrue(client.state.value is ClientState.Active)
+            assertTrue("client state=${client.state.value}", client.state.value is ClientState.Active)
         } finally { client.cancel(); srv.close() }
     }
 
@@ -68,6 +79,7 @@ class WingpaneClientTest {
         try {
             runCurrent()
             await(hello)
+            awaitClient(this, client) { client.state.value == ClientState.Rejected(RejectReason.VersionMismatch) }
             advanceTimeBy(20)
             runCurrent()
             assertEquals(ClientState.Rejected(RejectReason.VersionMismatch), client.state.value)
@@ -100,13 +112,14 @@ class WingpaneClientTest {
         val client = client(this, srv)
         try {
             runCurrent()
+            awaitClient(this, client) { client.state.value is ClientState.Active }
             advanceTimeBy(500)
             runCurrent()
             await(ping)
             advanceTimeBy(2_100)
             runCurrent()
             assertEquals(ClientState.Reconnecting, client.state.value)
-            advanceTimeBy(10_000)
+            advanceTimeBy(10_001)
             runCurrent()
             assertEquals(ClientState.Lost, client.state.value)
         } finally { client.cancel(); srv.close() }
@@ -125,6 +138,7 @@ class WingpaneClientTest {
             } else {
                 socket.getOutputStream().write(accept.encodeFrame())
                 secondHello.countDown()
+                try { readPacket(socket) } catch (_: Throwable) { }
             }
         }
         val client = client(this, srv)
@@ -134,6 +148,7 @@ class WingpaneClientTest {
             advanceTimeBy(1_000)
             runCurrent()
             await(secondHello)
+            awaitClient(this, client) { client.state.value is ClientState.Active }
             advanceTimeBy(20)
             runCurrent()
             assertTrue("reconnect handshake should be active", client.state.value is ClientState.Active)

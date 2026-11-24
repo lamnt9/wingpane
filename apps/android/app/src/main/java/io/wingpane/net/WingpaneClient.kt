@@ -7,10 +7,12 @@ import android.media.MediaFormat
 import io.wingpane.proto.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.*
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 sealed interface ClientState {
     data object Waiting : ClientState
@@ -37,9 +39,12 @@ class WingpaneClient(
 ) {
     private val mutableState = MutableStateFlow<ClientState>(ClientState.Waiting)
     val state: StateFlow<ClientState> = mutableState.asStateFlow()
-    private val incoming = Channel<Packet>(Channel.BUFFERED)
+    // Never conflate/drop here: H.264 P-frames depend on predecessors. Backlog is handled by
+    // VideoDecoder (drop until next IDR + RequestKeyframe).
+    private val videoIncoming = Channel<Packet>(Channel.UNLIMITED)
+    private val otherIncoming = Channel<Packet>(Channel.UNLIMITED)
     /** Only video and input packets are emitted; control messages are consumed by the client. */
-    val packets: Flow<Packet> = incoming.receiveAsFlow()
+    val packets: Flow<Packet> = merge(videoIncoming.receiveAsFlow(), otherIncoming.receiveAsFlow())
 
     private var job: Job? = null
     @Volatile private var socket: Socket? = null
@@ -48,22 +53,34 @@ class WingpaneClient(
     fun connect(host: String = "127.0.0.1", port: Int = 7788) {
         if (job?.isActive == true) return
         stopped.set(false)
-        job = scope.launch {
+        job = scope.launch clientLoop@ {
             var reconnectStartedAt: Long? = null
             var everActive = false
+            var lostWatchdog: Job? = null
+            fun watchLost(startedAt: Long) {
+                lostWatchdog?.cancel()
+                lostWatchdog = launch {
+                    val remaining = (LOST_AFTER_NS - (nanoTime() - startedAt)).coerceAtLeast(0)
+                    delay((remaining / 1_000_000L).coerceAtLeast(1))
+                    if (everActive && reconnectStartedAt == startedAt && !stopped.get()) {
+                        mutableState.value = ClientState.Lost
+                        try { socket?.close() } catch (_: Throwable) { }
+                    }
+                }
+            }
             while (isActive && !stopped.get()) {
                 val reconnectStart = reconnectStartedAt
                 if (reconnectStart != null) {
                     val elapsed = (nanoTime() - reconnectStart).coerceAtLeast(0)
                     if (everActive && elapsed >= LOST_AFTER_NS) {
                         mutableState.value = ClientState.Lost
-                        return@launch
+                        return@clientLoop
                     }
                     mutableState.value = if (everActive) ClientState.Reconnecting else ClientState.Waiting
                     delay(if (elapsed >= SLOW_RETRY_AFTER_NS) 2_000 else 1_000)
                     if (everActive && nanoTime() - reconnectStart >= LOST_AFTER_NS) {
                         mutableState.value = ClientState.Lost
-                        return@launch
+                        return@clientLoop
                     }
                 } else {
                     mutableState.value = ClientState.Waiting
@@ -86,27 +103,32 @@ class WingpaneClient(
                     mutableState.value = ClientState.Handshaking
                     val decoder = FrameDecoder()
                     val input = thisSocket.getInputStream()
-                    val buffer = ByteArray(16 * 1024)
+                    val reads = Channel<ByteArray>(Channel.UNLIMITED)
+                    val reader = Thread({
+                        val bytes = ByteArray(64 * 1024)
+                        try { while (true) { val n = input.read(bytes); if (n < 0) { reads.trySend(ByteArray(0)); break }; reads.trySend(bytes.copyOf(n)) } }
+                        catch (_: Throwable) { reads.trySend(ByteArray(0)) }
+                    }, "Wingpane-SocketReader").apply { isDaemon = true; start() }
                     val handshakeDeadline = nanoTime() + HANDSHAKE_TIMEOUT_NS
                     while (activeAccept == null && !stopped.get()) {
                         val reconnectStart = reconnectStartedAt
                         if (everActive && reconnectStart != null && nanoTime() - reconnectStart >= LOST_AFTER_NS) {
                             mutableState.value = ClientState.Lost
-                            return@launch
+                            return@clientLoop
                         }
-                        if (nanoTime() >= handshakeDeadline) {
+                        val remainingMs = ((handshakeDeadline - nanoTime()).coerceAtLeast(0) / 1_000_000L)
+                        if (remainingMs == 0L) {
                             if (everActive) {
                                 mutableState.value = ClientState.Reconnecting
                                 reconnectStartedAt = reconnectStartedAt ?: nanoTime()
                                 break
                             }
                             mutableState.value = ClientState.HandshakeFailed
-                            return@launch
+                            return@clientLoop
                         }
-                        val count = readAvailable(thisSocket, input, buffer)
-                        if (count < 0) throw java.io.EOFException("peer closed during handshake")
-                        if (count == 0) { delay(POLL_MS); continue }
-                        decoder.push(buffer, 0, count)
+                        val bytes = withTimeoutOrNull(remainingMs) { reads.receive() } ?: continue
+                        if (bytes.isEmpty()) throw java.io.EOFException("peer closed during handshake")
+                        decoder.push(bytes)
                         while (true) {
                             when (val packet = decoder.next() ?: break) {
                                 is Packet.Control -> when (val message = packet.message) {
@@ -118,11 +140,11 @@ class WingpaneClient(
                                     }
                                     is ControlMessage.Reject -> {
                                         mutableState.value = ClientState.Rejected(message.reason)
-                                        return@launch
+                                        return@clientLoop
                                     }
                                     else -> Unit
                                 }
-                                else -> incoming.send(packet)
+                                else -> emitPacket(packet)
                             }
                         }
                     }
@@ -130,63 +152,70 @@ class WingpaneClient(
                         reconnectStartedAt = reconnectStartedAt ?: nanoTime()
                         continue
                     }
-                    var lastPingAt = nanoTime()
-                    var oldestUnansweredPing: Long? = null
-                    while (isActive && !stopped.get()) {
-                        val now = nanoTime()
-                        val oldest = oldestUnansweredPing
-                        if (oldest != null && now - oldest >= PONG_TIMEOUT_NS) {
-                            mutableState.value = ClientState.Reconnecting
-                            reconnectStartedAt = now
-                            break
+                    val oldestUnansweredPing = AtomicLong(0L)
+                    val pingTicker = launch {
+                        while (isActive && !stopped.get()) {
+                            delay(500)
+                            val timestamp = nanoTime()
+                            withContext(ioDispatcher) { send(thisSocket, Packet.Control(ControlMessage.Ping(timestamp.toULong()))) }
+                            oldestUnansweredPing.compareAndSet(0L, timestamp)
                         }
-                        if (now - lastPingAt >= PING_INTERVAL_NS) {
-                            withContext(ioDispatcher) {
-                                send(thisSocket, Packet.Control(ControlMessage.Ping(now.toULong())))
-                            }
-                            lastPingAt = now
-                            if (oldestUnansweredPing == null) oldestUnansweredPing = now
-                        }
-                        val count = readAvailable(thisSocket, input, buffer)
-                        if (count < 0) throw java.io.EOFException("peer closed")
-                        if (count > 0) {
-                            decoder.push(buffer, 0, count)
-                            while (true) {
-                                when (val packet = decoder.next() ?: break) {
-                                    is Packet.Control -> when (val message = packet.message) {
-                                        is ControlMessage.Pong -> if (
-                                            oldestUnansweredPing != null && message.timestampNs.toLong() == oldestUnansweredPing
-                                        ) oldestUnansweredPing = null
-                                        is ControlMessage.Reject -> {
-                                            mutableState.value = ClientState.Rejected(message.reason)
-                                            return@launch
-                                        }
-                                        else -> Unit
-                                    }
-                                    else -> incoming.send(packet)
-                                }
-                            }
-                        } else delay(POLL_MS)
                     }
-                    if (mutableState.value is ClientState.Lost) return@launch
+                    val pongWatchdog = launch {
+                        while (isActive && !stopped.get()) {
+                            delay(50)
+                            val oldest = oldestUnansweredPing.get()
+                            val now = nanoTime()
+                            if (oldest != 0L && now - oldest >= PONG_TIMEOUT_NS) {
+                                mutableState.value = ClientState.Reconnecting
+                                reconnectStartedAt = now
+                                watchLost(now)
+                                try { thisSocket.close() } catch (_: Throwable) { }
+                                return@launch
+                            }
+                        }
+                    }
+                    try { activeRead@ while (isActive && !stopped.get()) {
+                        val bytes = reads.receive()
+                        if (bytes.isEmpty()) throw IllegalStateException("peer closed")
+                        decoder.push(bytes)
+                        while (true) {
+                            when (val packet = decoder.next() ?: break) {
+                                is Packet.Control -> when (val message = packet.message) {
+                                    is ControlMessage.Pong -> if (message.timestampNs.toLong() == oldestUnansweredPing.get()) oldestUnansweredPing.set(0L)
+                                    is ControlMessage.Reject -> {
+                                        mutableState.value = ClientState.Rejected(message.reason)
+                                        break@activeRead
+                                    }
+                                    else -> Unit
+                                }
+                                else -> emitPacket(packet)
+                            }
+                        }
+                    } } finally { pingTicker.cancel(); pongWatchdog.cancel() }
+                    if (mutableState.value is ClientState.Lost) return@clientLoop
                     if (reconnectStartedAt == null && !stopped.get()) reconnectStartedAt = nanoTime()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {
+                    if (mutableState.value is ClientState.Lost) return@clientLoop
                     if (!stopped.get() && mutableState.value is ClientState.Handshaking && !everActive) {
                         mutableState.value = ClientState.HandshakeFailed
-                        return@launch
+                        return@clientLoop
                     }
                     if (!stopped.get() && mutableState.value !is ClientState.HandshakeFailed && mutableState.value !is ClientState.Rejected) {
                         val wasActive = everActive
                         if (wasActive) mutableState.value = ClientState.Reconnecting
-                        if (reconnectStartedAt == null) reconnectStartedAt = nanoTime()
+                        if (reconnectStartedAt == null) {
+                            reconnectStartedAt = nanoTime()
+                            if (everActive) watchLost(reconnectStartedAt!!)
+                        }
                     }
                 } finally {
                     try { thisSocket?.close() } catch (_: Throwable) { }
                     if (socket === thisSocket) socket = null
                 }
-                if (mutableState.value is ClientState.Rejected) return@launch
+                if (mutableState.value is ClientState.Rejected) return@clientLoop
             }
         }
     }
@@ -200,24 +229,27 @@ class WingpaneClient(
         mutableState.value = ClientState.Waiting
     }
 
+    suspend fun sendControl(message: ControlMessage) = withContext(ioDispatcher) {
+        socket?.let { send(it, Packet.Control(message)) }
+    }
+
     fun cancel() {
         stopped.set(true)
         job?.cancel()
         try { socket?.close() } catch (_: Throwable) { }
         socket = null
-        incoming.close()
+        videoIncoming.close(); otherIncoming.close()
         mutableState.value = ClientState.Waiting
     }
-
-    // Called from the client's dispatcher (Dispatchers.IO in production). available() ensures
-    // read() will not wait for the peer, while making the state loop deterministic under runTest.
-    private fun readAvailable(socket: Socket, input: java.io.InputStream, buffer: ByteArray): Int =
-        if (socket.isClosed) -1 else if (input.available() == 0) 0 else input.read(buffer)
 
     private fun send(socket: Socket, packet: Packet) {
         val bytes = packet.encodeFrame()
         socket.getOutputStream().write(bytes)
         socket.getOutputStream().flush()
+    }
+
+    private fun emitPacket(packet: Packet) {
+        if (packet is Packet.Video) videoIncoming.trySend(packet) else otherIncoming.trySend(packet)
     }
 
     private companion object {
@@ -227,7 +259,6 @@ class WingpaneClient(
         const val PING_INTERVAL_NS = 500_000_000L
         const val LOST_AFTER_NS = 10_000_000_000L
         const val SLOW_RETRY_AFTER_NS = 30_000_000_000L
-        const val POLL_MS = 10L
 
         fun deviceCodecs(): List<VideoCodec> {
             val types = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
