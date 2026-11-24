@@ -99,7 +99,9 @@ internal class ConnectionStateMachine private constructor(private val model: Mod
 class WingpaneClient(
     private val deviceName: () -> String = { Build.MODEL ?: "Android" },
     private val screenSizePx: () -> Pair<Int, Int> = {
-        Resources.getSystem().displayMetrics.let { it.widthPixels to it.heightPixels }
+        // The stream is always sensorLandscape, but Hello may be sent while the connection
+        // screen is in portrait: always advertise landscape (long × short).
+        Resources.getSystem().displayMetrics.let { maxOf(it.widthPixels, it.heightPixels) to minOf(it.widthPixels, it.heightPixels) }
     },
     private val supportedCodecs: () -> List<VideoCodec> = { deviceCodecs() },
     private val refreshRateHz: () -> Int = { 60 },
