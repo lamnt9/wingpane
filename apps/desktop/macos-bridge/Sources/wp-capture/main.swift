@@ -26,29 +26,13 @@ func parse() throws -> Options {
     guard o.width > 0, o.height > 0, o.hz > 0, o.seconds > 0, o.bitrate > 0 else { throw CLIError(text: "invalid numeric option") }; return o
 }
 
-final class ClockView: NSView {
-    private let began = Date()
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.setFill(); bounds.fill()
-        let elapsed = Date().timeIntervalSince(began)
-        let barX = CGFloat(elapsed.truncatingRemainder(dividingBy: 4) / 4) * bounds.width
-        NSColor.systemCyan.setFill(); NSRect(x: barX, y: bounds.midY - 18, width: 180, height: 36).fill()
-        let label = String(format: "%.3f ms", elapsed * 1000) as NSString
-        label.draw(at: NSPoint(x: 36, y: bounds.maxY - 110), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 64, weight: .bold), .foregroundColor: NSColor.white])
-    }
-}
-
 @MainActor func run() async throws {
     let o = try parse(); let display = try VirtualDisplay(width: o.width, height: o.height, refreshHz: o.hz, hiDPI: o.hidpi)
     defer { display.close() }
     let mode = CGDisplayCopyDisplayMode(display.displayID); let w = mode?.pixelWidth ?? o.width; let h = mode?.pixelHeight ?? o.height
     print("Display ID: \(display.displayID), pixels: \(w)x\(h)")
-    var window: NSWindow?
     if o.animate {
-        let app = NSApplication.shared; app.setActivationPolicy(.accessory)
-        guard let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display.displayID }) else { throw CLIError(text: "AppKit cannot find the virtual display screen") }
-        let win = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false, screen: screen); win.level = .screenSaver; win.contentView = ClockView(frame: screen.frame); win.makeKeyAndOrderFront(nil); window = win
-        Timer.scheduledTimer(withTimeInterval: 1 / o.hz, repeats: true) { _ in MainActor.assumeIsolated { win.contentView?.needsDisplay = true } }
+        CaptureTestPattern.shared.show(on: display.displayID)
     }
     let capture = CaptureEncoder(displayID: display.displayID, width: w, height: h, hz: o.hz, bitrate: Int(o.bitrate * 1_000_000))
     let file = FileManager.default.createFile(atPath: o.out, contents: nil); guard file else { throw CLIError(text: "cannot create output file") }
@@ -60,7 +44,9 @@ final class ClockView: NSView {
         throw error
     }
     print("Low-latency rate control requested (session created with spec): \(capture.lowLatencyRateControlAccepted)")
-    try await Task.sleep(for: .seconds(o.seconds)); await capture.stop(); window?.close(); try handle.close()
+    try await Task.sleep(for: .seconds(o.seconds)); await capture.stop()
+    if o.animate { CaptureTestPattern.shared.hide(on: display.displayID) }
+    try handle.close()
     let (n, k, b, ls) = state.snapshot()
     func percentile(_ p: Double) -> Double { guard !ls.isEmpty else { return 0 }; return Double(ls[min(ls.count - 1, Int(Double(ls.count - 1) * p))]) / 1000 }
     let captured = capture.framesCaptured

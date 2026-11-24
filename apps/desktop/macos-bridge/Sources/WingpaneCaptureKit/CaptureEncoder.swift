@@ -113,6 +113,8 @@ public final class CaptureEncoder: NSObject, SCStreamOutput, @unchecked Sendable
             output.append(contentsOf: [0,0,0,1]); output.append(contentsOf: raw[cursor..<cursor+Int(n)]); cursor += Int(n)
         }
         let now = Int64(DispatchTime.now().uptimeNanoseconds / 1000)
-        callback?(EncodedFrame(annexB: output, isKeyframe: key, ptsUs: startedAtUs, encodeLatencyUs: now - startedAtUs))
+        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
+        let ptsUs = presentationTime.isValid ? CMTimeConvertScale(presentationTime, timescale: 1_000_000, method: .default).value : startedAtUs
+        callback?(EncodedFrame(annexB: output, isKeyframe: key, ptsUs: ptsUs, encodeLatencyUs: now - startedAtUs))
     }
 }

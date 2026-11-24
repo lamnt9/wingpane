@@ -3,7 +3,10 @@ use std::net::SocketAddr;
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpListener, TcpStream,
+    },
 };
 use wingpane_proto::{
     encode_frame, ControlMessage, FrameDecoder, FrameError, Packet, MAX_FRAME_LEN,
@@ -34,6 +37,13 @@ impl FramedTcp {
     }
     pub fn peer_addr(&self) -> Result<SocketAddr, TransportError> {
         Ok(self.stream.peer_addr()?)
+    }
+    pub fn into_split(self) -> (FramedReader, FramedWriter) {
+        let (reader, writer) = self.stream.into_split();
+        (
+            FramedReader { stream: reader },
+            FramedWriter { stream: writer },
+        )
     }
     pub async fn send(&mut self, packet: &Packet) -> Result<(), TransportError> {
         // TODO(FR-7): prioritize Input/Control ahead of queued Video packets.
@@ -72,6 +82,55 @@ impl FramedTcp {
         })?;
         decoder.push(&body);
         Ok(decoder.next_packet()?)
+    }
+}
+
+pub struct FramedReader {
+    stream: OwnedReadHalf,
+}
+impl FramedReader {
+    pub async fn recv(&mut self) -> Result<Option<Packet>, TransportError> {
+        let mut header = [0; 4];
+        let n = self.stream.read(&mut header[..1]).await?;
+        if n == 0 {
+            return Ok(None);
+        }
+        self.stream
+            .read_exact(&mut header[1..])
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    TransportError::Truncated
+                } else {
+                    e.into()
+                }
+            })?;
+        let len = u32::from_le_bytes(header);
+        let mut decoder = FrameDecoder::new();
+        decoder.push(&header);
+        let _ = decoder.next_packet()?;
+        let mut body = vec![0; len as usize];
+        self.stream.read_exact(&mut body).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                TransportError::Truncated
+            } else {
+                e.into()
+            }
+        })?;
+        decoder.push(&body);
+        Ok(decoder.next_packet()?)
+    }
+}
+
+pub struct FramedWriter {
+    stream: OwnedWriteHalf,
+}
+impl FramedWriter {
+    pub async fn send(&mut self, packet: &Packet) -> Result<(), TransportError> {
+        let mut bytes = Vec::new();
+        encode_frame(packet, &mut bytes)?;
+        self.stream.write_all(&bytes).await?;
+        Ok(())
     }
 }
 
