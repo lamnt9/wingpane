@@ -44,3 +44,11 @@ File này lưu trữ các quyết định kiến trúc quan trọng của dự �
 * **Quyết định:** MVP viết codec postcard bằng Kotlin cho đúng tập `Packet` hiện có (varint, enum tag, length-prefix). Tính đúng được khoá bằng **golden vectors** do Rust sinh (`wingpane-proto` xuất file hex, test Kotlin đọc lại).
 * **Lý do:** Bỏ toolchain NDK/uniffi khỏi đường găng MVP; đường giải mã video giữ thuần Kotlin, không phải copy qua JNI.
 * **Rủi ro:** Hai bên schema lệch nhau → chặn bằng golden test bắt buộc trong CI. Xem lại khi cần dùng chung logic nặng (đường cong áp lực, gesture) ở Phase 2.
+
+---
+
+## [ADR-006] 2026-11-25: Chấp nhận p95 độ trễ cho MVP USB
+* **Trạng thái:** Approved (anh Lâm)
+* **Bối cảnh:** Đo trên Galaxy A36, 2340×1080@60 qua `adb reverse`: e2e p50 18.8 ms (đạt ≤25 ms), p95 40 ms. Phân rã: encode p95 8.7 ms, ghi socket 0.1 ms, giải mã p95 14 ms, đường adb p95 ≈18 ms.
+* **Quyết định:** Phát hành MVP với p95 40 ms là known issue. Không tối ưu thêm trong Phase 1.
+* **Hệ quả:** Phase sau spike transport thay thế (USB tethering/RNDIS, Wi‑Fi QUIC theo roadmap Phase 4) và đo lại theo telemetry theo chặng (`wingpaned --stats`, logcat `WingpaneLatency`).
