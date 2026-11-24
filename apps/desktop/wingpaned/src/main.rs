@@ -3,7 +3,7 @@ use std::{
     ffi::c_void,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -20,9 +20,49 @@ use wingpaned::{
 
 struct CallbackContext {
     queue: Arc<FrameQueue>,
+    latency: Arc<LatencyWindow>,
     handle: AtomicU64,
     encoded: AtomicU64,
     backlog_dropped: AtomicU64,
+}
+
+#[derive(Default)]
+struct LatencySamples {
+    encode_us: Vec<u64>,
+    write_us: Vec<u64>,
+    frame_bytes: Vec<u64>,
+    keyframes: u64,
+}
+
+#[derive(Default)]
+struct LatencyWindow(Mutex<LatencySamples>);
+
+impl LatencyWindow {
+    fn encoded(&self, duration_us: u64) {
+        let mut samples = self.0.lock().expect("latency stats poisoned");
+        samples.encode_us.push(duration_us);
+    }
+
+    fn written(&self, duration_us: u64, bytes: usize, keyframe: bool) {
+        let mut samples = self.0.lock().expect("latency stats poisoned");
+        samples.write_us.push(duration_us);
+        samples.frame_bytes.push(bytes as u64);
+        if keyframe {
+            samples.keyframes += 1;
+        }
+    }
+
+    fn take(&self) -> LatencySamples {
+        std::mem::take(&mut *self.0.lock().expect("latency stats poisoned"))
+    }
+}
+
+fn percentile(values: &mut [u64], p: f64) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    values.sort_unstable();
+    values[((values.len() - 1) as f64 * p) as usize]
 }
 struct ContextGuard(usize);
 impl Drop for ContextGuard {
@@ -48,11 +88,15 @@ unsafe extern "C" fn on_frame(
     let ctx = unsafe { &*(ctx.cast::<CallbackContext>()) };
     ctx.encoded.fetch_add(1, Ordering::Relaxed);
     let bytes = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
+    let encode_done_us = ffi::host_time_us();
+    ctx.latency
+        .encoded(encode_done_us.saturating_sub(pts.max(0) as u64));
     if ctx.queue.push_with_overflow(
         EncodedFrame {
             data: bytes,
             keyframe: key != 0,
             pts_us: pts.max(0) as u64,
+            encode_done_us,
         },
         || {
             let handle = ctx.handle.load(Ordering::Relaxed);
@@ -147,11 +191,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let mut opts = options();
+    #[cfg(unix)]
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    #[cfg(unix)]
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     if !unsafe { wp_input_trusted() } {
         eprintln!("Grant Accessibility to this terminal: System Settings › Privacy & Security › Accessibility");
     }
     if opts.adb {
-        opts.serial = Some(wait_for_adb(opts.port, opts.serial.as_deref()).await?);
+        #[cfg(unix)]
+        let serial = tokio::select! {
+            result = wait_for_adb(opts.port, opts.serial.as_deref()) => Some(result?),
+            _ = sigint.recv() => None,
+            _ = sigterm.recv() => None,
+        };
+        #[cfg(not(unix))]
+        let serial = tokio::select! {
+            result = wait_for_adb(opts.port, opts.serial.as_deref()) => Some(result?),
+            _ = tokio::signal::ctrl_c() => None,
+        };
+        let Some(serial) = serial else {
+            eprintln!("shutdown signal received while waiting for adb");
+            return Ok(());
+        };
+        opts.serial = Some(serial);
     }
     let listener = TcpListener::bind(("127.0.0.1", opts.port)).await?;
     eprintln!("wingpaned listening on 127.0.0.1:{}", opts.port);
@@ -161,10 +224,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sessions = JoinSet::new();
     // Match the display refresh and avoid flooding the main queue with redundant AppKit pumps.
     let mut ui_tick = tokio::time::interval(Duration::from_micros(16_667));
-    #[cfg(unix)]
-    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-    #[cfg(unix)]
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
         tokio::select! {
             _ = ui_tick.tick(), if opts.test_pattern => unsafe { wp_test_pattern_pump() },
@@ -324,7 +383,11 @@ async fn adb(args: &[&str]) -> Result<std::process::Output, std::io::Error> {
     }
     candidates.push("adb".into());
     for a in candidates {
-        let result = tokio::process::Command::new(a).args(args).output().await;
+        let result = tokio::process::Command::new(a)
+            .kill_on_drop(true)
+            .args(args)
+            .output()
+            .await;
         if let Ok(o) = result {
             return Ok(o);
         }
@@ -339,6 +402,10 @@ async fn run_session(stream: TcpStream, opts: Options) {
     let mut end_log = DisconnectLog {
         reason: "session setup ended".to_owned(),
     };
+    match set_send_buffer(&stream, 256 * 1024) {
+        Ok(effective) => eprintln!("TCP SO_SNDBUF requested=262144 effective={effective} bytes"),
+        Err(error) => eprintln!("TCP SO_SNDBUF request failed: {error}"),
+    }
     let Ok(mut framed) = FramedTcp::new(stream) else {
         end_log.reason = "invalid framed stream".into();
         return;
@@ -397,8 +464,10 @@ async fn run_session(stream: TcpStream, opts: Options) {
     let _test_pattern = TestPatternGuard(opts.test_pattern.then(|| display.id()));
     let _ = framed.send(&Packet::Control(reply.send)).await;
     let queue = Arc::new(FrameQueue::default());
+    let latency = Arc::new(LatencyWindow::default());
     let context = Box::new(CallbackContext {
         queue: queue.clone(),
+        latency: latency.clone(),
         handle: AtomicU64::new(0),
         encoded: AtomicU64::new(0),
         backlog_dropped: AtomicU64::new(0),
@@ -435,6 +504,8 @@ async fn run_session(stream: TcpStream, opts: Options) {
         display: Box::new(display),
     };
     let stats_queue = queue.clone();
+    let stats_latency = latency.clone();
+    let writer_latency = latency.clone();
     let stats_sent = Arc::new(AtomicU64::new(0));
     let writer_sent = stats_sent.clone();
     let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
@@ -448,7 +519,10 @@ async fn run_session(stream: TcpStream, opts: Options) {
                 Some(p) = control_rx.recv() => if writer.send(&p).await.is_err() { break; },
                 frame = queue.pop() => {
                     let p = Packet::Video(VideoPacket { frame_seq: seq, pts_us: frame.pts_us, is_keyframe: frame.keyframe, payload: frame.data }); seq = seq.wrapping_add(1);
+                    let frame_bytes = match &p { Packet::Video(video) => video.payload.len(), _ => 0 };
+                    let encode_done_us = frame.encode_done_us;
                     if writer.send(&p).await.is_err() { break; }
+                    writer_latency.written(ffi::host_time_us().saturating_sub(encode_done_us), frame_bytes, frame.keyframe);
                     writer_sent.fetch_add(1, Ordering::Relaxed);
                 }
             }
@@ -463,7 +537,10 @@ async fn run_session(stream: TcpStream, opts: Options) {
                     let ctx = unsafe { &*(context_addr as *const CallbackContext) };
                     let handle = ctx.handle.load(Ordering::Relaxed);
                     let current = (ffi::capture_frames_captured(handle), ctx.encoded.load(Ordering::Relaxed), stats_sent.load(Ordering::Relaxed), stats_queue.dropped_frames());
-                    eprintln!("capture stats: sck={} encoded={} sent={} backlog_dropped={}", current.0-previous_stats.0, current.1-previous_stats.1, current.2-previous_stats.2, current.3-previous_stats.3);
+                    let mut samples = stats_latency.take();
+                    let encode_max = samples.encode_us.iter().copied().max().unwrap_or(0);
+                    let write_max = samples.write_us.iter().copied().max().unwrap_or(0);
+                    eprintln!("host stats: sck={} encoded={} sent={} backlog_dropped={} encode_capture_p50_us={} encode_capture_p95_us={} encode_capture_max_us={} encode_samples={} write_p50_us={} write_p95_us={} write_max_us={} write_samples={} bytes_frame_p95={} keyframes={}", current.0-previous_stats.0, current.1-previous_stats.1, current.2-previous_stats.2, current.3-previous_stats.3, percentile(&mut samples.encode_us, 0.50), percentile(&mut samples.encode_us, 0.95), encode_max, samples.encode_us.len(), percentile(&mut samples.write_us, 0.50), percentile(&mut samples.write_us, 0.95), write_max, samples.write_us.len(), percentile(&mut samples.frame_bytes, 0.95), samples.keyframes);
                     previous_stats = current;
                     None
                 }
@@ -509,6 +586,58 @@ async fn run_session(stream: TcpStream, opts: Options) {
     drop(resources);
     writer_task.abort();
     let _ = writer_task.await;
+}
+
+#[cfg(target_os = "macos")]
+fn set_send_buffer(stream: &TcpStream, bytes: i32) -> std::io::Result<i32> {
+    use std::os::fd::AsRawFd;
+    unsafe extern "C" {
+        fn setsockopt(fd: i32, level: i32, option: i32, value: *const c_void, length: u32) -> i32;
+        fn getsockopt(
+            fd: i32,
+            level: i32,
+            option: i32,
+            value: *mut c_void,
+            length: *mut u32,
+        ) -> i32;
+    }
+    // macOS/BSD socket constants. FramedTcp sets TCP_NODELAY separately.
+    const SOL_SOCKET: i32 = 0xffff;
+    const SO_SNDBUF: i32 = 0x1001;
+    let result = unsafe {
+        setsockopt(
+            stream.as_raw_fd(),
+            SOL_SOCKET,
+            SO_SNDBUF,
+            (&bytes as *const i32).cast(),
+            std::mem::size_of_val(&bytes) as u32,
+        )
+    };
+    if result == 0 {
+        let mut effective = 0i32;
+        let mut length = std::mem::size_of_val(&effective) as u32;
+        let read_result = unsafe {
+            getsockopt(
+                stream.as_raw_fd(),
+                SOL_SOCKET,
+                SO_SNDBUF,
+                (&mut effective as *mut i32).cast(),
+                &mut length,
+            )
+        };
+        if read_result == 0 {
+            Ok(effective)
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_send_buffer(_: &TcpStream, _: i32) -> std::io::Result<i32> {
+    Ok(0)
 }
 
 #[cfg(test)]

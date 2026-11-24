@@ -13,6 +13,7 @@ pub struct EncodedFrame {
     pub data: Vec<u8>,
     pub keyframe: bool,
     pub pts_us: u64,
+    pub encode_done_us: u64,
 }
 
 #[derive(Default)]
@@ -174,6 +175,7 @@ mod tests {
             data: vec![n],
             keyframe,
             pts_us: n.into(),
+            encode_done_us: n.into(),
         }
     }
     #[test]

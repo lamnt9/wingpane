@@ -58,7 +58,11 @@ public final class CaptureEncoder: NSObject, SCStreamOutput, @unchecked Sendable
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_Main_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: bitrate as CFNumber)
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 2.0 as CFNumber)
+        let frameDelayStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
+        let frameRateStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: Int(hz.rounded()) as CFNumber)
+        let keyframeStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 10.0 as CFNumber)
+        let sliceStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxH264SliceBytes, value: 1200 as CFNumber)
+        print("WingpaneVideoToolbox maxFrameDelay=\(frameDelayStatus) expectedFrameRate=\(frameRateStatus) keyframeInterval10s=\(keyframeStatus) maxH264SliceBytes=\(sliceStatus)")
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
         VTCompressionSessionPrepareToEncodeFrames(session)
 
