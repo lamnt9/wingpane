@@ -36,6 +36,7 @@ Layout tablet landscape: left = line diagram tablet ⇄ cable ⇄ Mac (animated 
 | S1 Waiting | retrying, refused/timeout | "Waiting for your Mac" — "Connect the USB cable and run Wingpane on your Mac." | — (passive pulse) | "Setup guide" |
 | S1 Setup guide (sheet, user-opened; also auto-suggested once after 30s) | — | 3 steps: enable Developer options + USB debugging; accept "Allow USB debugging?" on the tablet (tick Always allow); run `wingpane` on the Mac | "Open Developer options" | "Done" |
 | S3 Handshaking | TCP connected → Hello sent | "Connecting to your Mac…" | "Cancel" → S1 | — |
+| S1 Disconnected (added 2026-11-24, approved) | user pressed Disconnect in HUD; NO auto-retry | "Disconnected" — "Tap Connect when you want to use your Mac display again." | "Connect" | — |
 | S5a Version mismatch | Reject(VersionMismatch{host_version}) | "Update needed — Mac uses protocol v{n}, this app v1." | "Update app" / "Try again" | "Troubleshooting" |
 | S5b Unsupported device | Reject(UnsupportedCodec) | "This tablet can't decode H.264 video." | "Troubleshooting" | — |
 | S5c Busy | Reject(Busy) | "Your Mac is already connected to another device." | "Try again" | — |
@@ -45,7 +46,7 @@ Layout tablet landscape: left = line diagram tablet ⇄ cable ⇄ Mac (animated 
 State machine:
 - S1 → S3 (TCP connected, Hello sent) · S3 → Active (Accept) · S3 → S5a–d (Reject / malformed / 3s deadline) · S3 → S1 (Cancel)
 - Active → Reconnecting (EOF, reset, or no Pong within 2s of a Ping; app pings every 500ms) · Reconnecting → Active (new TCP + Hello + Accept; same `adb reverse` stays valid while the daemon runs) · Reconnecting → S5e (10s) · Reconnecting → S1 (Cancel)
-- Active → S1 (Disconnect from HUD) · S5* → S1 (Try again)
+- Active → S1 Disconnected (Disconnect from HUD; stays until user taps Connect) · S5* → S1 (Try again)
 On Accept → straight into Extended Display stream (no mode picker in MVP). Errors: liveRegion Polite (Assertive for S5e); focus to card title on state change.
 
 ## Screen 2 — Floating HUD (Extended Display stream)

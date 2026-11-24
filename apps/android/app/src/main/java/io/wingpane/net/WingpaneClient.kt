@@ -25,6 +25,8 @@ sealed interface ClientState {
     data object HandshakeFailed : ClientState
     data object Reconnecting : ClientState
     data object Lost : ClientState
+    /** User pressed Disconnect: no automatic reconnect until connect() is called again. */
+    data object Disconnected : ClientState
 }
 
 /** Pure connection policy. The loss timestamp belongs to the episode, not an attempt. */
@@ -336,7 +338,7 @@ class WingpaneClient(
         job?.cancel()
         try { socket?.close() } catch (_: Throwable) { }
         socket = null
-        mutableState.value = ClientState.Waiting
+        mutableState.value = ClientState.Disconnected
     }
 
     suspend fun sendControl(message: ControlMessage) = withContext(ioDispatcher) {

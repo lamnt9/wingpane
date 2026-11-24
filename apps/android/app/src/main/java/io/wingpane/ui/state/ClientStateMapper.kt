@@ -9,6 +9,7 @@ import io.wingpane.proto.RejectReason
  */
 enum class ScreenId {
     S1_WAITING,
+    S1_DISCONNECTED,
     S3_HANDSHAKING,
     S5A_VERSION_MISMATCH,
     S5B_UNSUPPORTED_DEVICE,
@@ -105,6 +106,19 @@ object ClientStateMapper {
             briefCopy = "Waiting for your Mac — Connect the USB cable and run Wingpane on your Mac.",
             primaryActionLabel = null,
             secondaryActionLabel = "Setup guide",
+            badgeLabel = null,
+            severity = StatusSeverity.INFO,
+            liveRegion = LiveRegionPoliteness.POLITE,
+        )
+
+        // Approved by anh Lâm 2026-11-24: user Disconnect must not auto-reconnect.
+        is ClientState.Disconnected -> ScreenUiModel(
+            screenId = ScreenId.S1_DISCONNECTED,
+            title = "Disconnected",
+            body = "Tap Connect when you want to use your Mac display again.",
+            briefCopy = "Disconnected — Tap Connect when you want to use your Mac display again.",
+            primaryActionLabel = "Connect",
+            secondaryActionLabel = null,
             badgeLabel = null,
             severity = StatusSeverity.INFO,
             liveRegion = LiveRegionPoliteness.POLITE,

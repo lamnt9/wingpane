@@ -704,6 +704,15 @@ private fun ConnectionStateCard(
                             )
                         }
 
+                        ScreenId.S1_DISCONNECTED -> {
+                            WingpanePrimaryButton(
+                                label = state.primaryActionLabel ?: "Connect",
+                                icon = Icons.Rounded.Refresh,
+                                onClick = onTryAgain,
+                                fillMaxWidth = true,
+                            )
+                        }
+
                         ScreenId.S3_HANDSHAKING -> {
                             WingpaneSecondaryButton(
                                 label = state.primaryActionLabel ?: stringResource(R.string.action_cancel),

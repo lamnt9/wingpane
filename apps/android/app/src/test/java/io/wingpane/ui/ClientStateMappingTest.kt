@@ -108,6 +108,14 @@ class ClientStateMappingTest {
     }
 
     @Test
+    fun `Disconnected maps to S1 disconnected with Connect and no auto setup`() {
+        val model = ClientStateMapper.map(ClientState.Disconnected)
+        assertEquals(ScreenId.S1_DISCONNECTED, model.screenId)
+        assertEquals("Disconnected", model.title)
+        assertEquals("Connect", model.primaryActionLabel)
+    }
+
+    @Test
     fun `Rejected UnsupportedCodec maps to S5b with exact copy and Troubleshooting`() {
         val model = ClientStateMapper.map(ClientState.Rejected(RejectReason.UnsupportedCodec))
         assertEquals(ScreenId.S5B_UNSUPPORTED_DEVICE, model.screenId)

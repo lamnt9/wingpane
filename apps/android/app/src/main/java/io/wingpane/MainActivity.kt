@@ -153,8 +153,7 @@ class MainActivity : ComponentActivity() {
                             externalOpenRequestTick = hudOpenRequestTick,
                             onDisconnect = {
                                 cancelTouch()
-                                client.disconnect()
-                                client.connect()
+                                client.disconnect() // -> Disconnected; no auto-reconnect
                             },
                             onCancelReconnect = {
                                 cancelTouch()
