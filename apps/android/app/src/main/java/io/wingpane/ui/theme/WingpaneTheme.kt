@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+
 package io.wingpane.ui.theme
 
 import androidx.compose.material3.ColorScheme
@@ -13,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -64,15 +67,15 @@ data class WingpaneTouch(
 )
 
 val OutfitFontFamily = FontFamily(
-    Font(R.font.outfit_variable, FontWeight.SemiBold),
-    Font(R.font.outfit_variable, FontWeight.Bold),
-    Font(R.font.outfit_variable, FontWeight.Medium),
+    Font(R.font.outfit_variable, FontWeight.SemiBold, variationSettings = FontVariation.Settings(FontVariation.weight(FontWeight.SemiBold.weight))),
+    Font(R.font.outfit_variable, FontWeight.Bold, variationSettings = FontVariation.Settings(FontVariation.weight(FontWeight.Bold.weight))),
+    Font(R.font.outfit_variable, FontWeight.Medium, variationSettings = FontVariation.Settings(FontVariation.weight(FontWeight.Medium.weight))),
 )
 
 val WorkSansFontFamily = FontFamily(
-    Font(R.font.work_sans_variable, FontWeight.Normal),
-    Font(R.font.work_sans_variable, FontWeight.Medium),
-    Font(R.font.work_sans_variable, FontWeight.SemiBold),
+    Font(R.font.work_sans_variable, FontWeight.Normal, variationSettings = FontVariation.Settings(FontVariation.weight(FontWeight.Normal.weight))),
+    Font(R.font.work_sans_variable, FontWeight.Medium, variationSettings = FontVariation.Settings(FontVariation.weight(FontWeight.Medium.weight))),
+    Font(R.font.work_sans_variable, FontWeight.SemiBold, variationSettings = FontVariation.Settings(FontVariation.weight(FontWeight.SemiBold.weight))),
 )
 
 @Immutable

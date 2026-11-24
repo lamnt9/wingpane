@@ -1048,6 +1048,8 @@ private fun SetupStepCard(step: SetupGuideStep) {
                         text = step.title,
                         style = WingpaneTheme.typography.bodyStrong,
                         color = colors.text,
+                        // Title wraps; the code badge keeps its intrinsic width.
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (step.codeBadge != null) {
                         Box(
@@ -1061,6 +1063,8 @@ private fun SetupStepCard(step: SetupGuideStep) {
                                 text = step.codeBadge,
                                 style = WingpaneTheme.typography.captionStrong,
                                 color = colors.primary,
+                                maxLines = 1,
+                                softWrap = false,
                             )
                         }
                     }
