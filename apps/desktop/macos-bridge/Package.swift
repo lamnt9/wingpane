@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "WingpaneDisplayKit", targets: ["WingpaneDisplayKit"]),
         .library(name: "WingpaneCaptureKit", targets: ["WingpaneCaptureKit"]),
+        .library(name: "WingpaneBridge", type: .static, targets: ["WingpaneBridge"]),
         .executable(name: "wp-vdisplay", targets: ["wp-vdisplay"]),
         .executable(name: "wp-capture", targets: ["wp-capture"]),
     ],
@@ -27,7 +28,12 @@ let package = Package(
         ),
         .target(name: "WingpaneCaptureKit", linkerSettings: [
             .linkedFramework("ScreenCaptureKit"), .linkedFramework("VideoToolbox"),
-            .linkedFramework("CoreMedia"), .linkedFramework("CoreVideo")
+            .linkedFramework("CoreMedia"), .linkedFramework("CoreVideo"), .linkedFramework("AppKit")
+        ]),
+        .target(name: "WingpaneBridge", dependencies: ["WingpaneDisplayKit", "WingpaneCaptureKit"], linkerSettings: [
+            .linkedFramework("ScreenCaptureKit"), .linkedFramework("VideoToolbox"),
+            .linkedFramework("CoreMedia"), .linkedFramework("CoreVideo"),
+            .linkedFramework("CoreGraphics"), .linkedFramework("Foundation"), .linkedFramework("AppKit")
         ]),
         .executableTarget(
             name: "wp-vdisplay",
