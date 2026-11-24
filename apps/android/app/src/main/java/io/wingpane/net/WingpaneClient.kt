@@ -105,7 +105,8 @@ class WingpaneClient(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val socketFactory: () -> Socket = { Socket() },
     private val nanoTime: () -> Long = System::nanoTime,
-    private val inputTimeUs: () -> Long = { SystemClock.uptimeNanos() / 1_000L },
+    // System.nanoTime == CLOCK_MONOTONIC on Android; SystemClock.uptimeNanos() is API 35+ (minSdk is 29).
+    private val inputTimeUs: () -> Long = { System.nanoTime() / 1_000L },
 ) {
     val clockOffsetEstimator = ClockOffsetEstimator()
     @Volatile var clockSync: ClockOffsetEstimator.Estimate? = null
