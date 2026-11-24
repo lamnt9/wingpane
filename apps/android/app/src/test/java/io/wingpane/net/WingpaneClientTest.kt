@@ -22,13 +22,14 @@ class WingpaneClientTest {
 
     private fun server(handler: (Socket, Int) -> Unit): FakeServer = FakeServer(handler)
 
-    private fun client(testScope: kotlinx.coroutines.test.TestScope, server: FakeServer) = WingpaneClient(
+    private fun client(testScope: kotlinx.coroutines.test.TestScope, server: FakeServer, inputClock: () -> Long = { 123_456L }) = WingpaneClient(
         deviceName = { "Unit Test" }, screenSizePx = { 1920 to 1080 },
         supportedCodecs = { listOf(VideoCodec.H264) }, refreshRateHz = { 60 },
         scope = testScope.backgroundScope,
         ioDispatcher = testScope.coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
         socketFactory = { Socket() },
         nanoTime = { testScope.testScheduler.currentTime * 1_000_000L },
+        inputTimeUs = inputClock,
     ).also { it.connect("127.0.0.1", server.port) }
 
     private fun await(latch: CountDownLatch) {
@@ -63,6 +64,34 @@ class WingpaneClientTest {
             advanceTimeBy(20)
             runCurrent()
             assertTrue("client state=${client.state.value}", client.state.value is ClientState.Active)
+        } finally { client.cancel(); srv.close() }
+    }
+
+    @Test fun sendInputDropsBeforeActiveAndSequencesEncodedPackets() = runTest {
+        val accepted = CountDownLatch(1)
+        val received = CountDownLatch(2)
+        val packets = java.util.Collections.synchronizedList(mutableListOf<Packet>())
+        val srv = server { socket, _ ->
+            readPacket(socket)
+            accepted.await(5, TimeUnit.SECONDS)
+            socket.getOutputStream().write(accept.encodeFrame())
+            repeat(2) { packets += readPacket(socket); received.countDown() }
+        }
+        val client = client(this, srv)
+        try {
+            runCurrent()
+            client.sendInput(InputEvent.Touch(0u, 0.2f, 0.3f, TouchPhase.Down))
+            accepted.countDown()
+            awaitClient(this, client) { client.state.value is ClientState.Active }
+            client.sendInput(InputEvent.Touch(0u, 0.2f, 0.3f, TouchPhase.Down))
+            client.sendInput(InputEvent.Touch(0u, 0.4f, 0.5f, TouchPhase.Up))
+            runCurrent()
+            await(received)
+            val inputs = packets.map { (it as Packet.Input).packet }
+            assertEquals(listOf(0u, 1u), inputs.map { it.seq })
+            assertTrue(inputs.all { it.tsUs == 123_456uL })
+            assertEquals(InputEvent.Touch(0u, 0.2f, 0.3f, TouchPhase.Down), inputs[0].event)
+            assertEquals(InputEvent.Touch(0u, 0.4f, 0.5f, TouchPhase.Up), inputs[1].event)
         } finally { client.cancel(); srv.close() }
     }
 
