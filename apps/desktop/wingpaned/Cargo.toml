@@ -9,6 +9,8 @@ build = "build.rs"
 tokio.workspace = true
 wingpane-core = { path = "../../../crates/wingpane-core" }
 wingpane-proto = { path = "../../../crates/wingpane-proto" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [build-dependencies]
 
