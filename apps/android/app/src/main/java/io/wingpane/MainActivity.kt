@@ -77,10 +77,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        lifecycleScope.launch {
+        // Video must never wait for the UI thread (lifecycleScope defaults to Main.immediate).
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             client.packets.collect { packet ->
                 if (packet is Packet.Video) {
-                    decoder.queueAccessUnit(packet.packet.payload, packet.packet.ptsUs.toLong())
+                    decoder.queueAccessUnit(packet.packet.payload, packet.packet.ptsUs.toLong(), client.takeVideoReceivedAtNs(packet.packet.ptsUs.toLong()))
                 }
             }
         }

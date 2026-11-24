@@ -129,6 +129,10 @@ class WingpaneClient(
     private val inputSeq = AtomicInteger(0)
     private val inputQueue = Channel<InputPacket>(Channel.UNLIMITED)
     private val outputLock = Any()
+    private val videoReceivedAtNs = java.util.concurrent.ConcurrentHashMap<Long, Long>()
+
+    /** Monotonic arrival time for local latency accounting; it is not part of the wire packet. */
+    fun takeVideoReceivedAtNs(ptsUs: Long): Long = videoReceivedAtNs.remove(ptsUs) ?: System.nanoTime()
 
     init {
         scope.launch(ioDispatcher) {
@@ -363,6 +367,10 @@ class WingpaneClient(
     }
 
     private fun emitPacket(packet: Packet) {
+        if (packet is Packet.Video) {
+            videoReceivedAtNs[packet.packet.ptsUs.toLong()] = System.nanoTime()
+            if (videoReceivedAtNs.size > 240) videoReceivedAtNs.keys.firstOrNull()?.let(videoReceivedAtNs::remove)
+        }
         if (packet is Packet.Video) videoIncoming.trySend(packet) else otherIncoming.trySend(packet)
     }
 
