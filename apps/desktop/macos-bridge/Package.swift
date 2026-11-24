@@ -6,7 +6,9 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "WingpaneDisplayKit", targets: ["WingpaneDisplayKit"]),
+        .library(name: "WingpaneCaptureKit", targets: ["WingpaneCaptureKit"]),
         .executable(name: "wp-vdisplay", targets: ["wp-vdisplay"]),
+        .executable(name: "wp-capture", targets: ["wp-capture"]),
     ],
     targets: [
         .target(
@@ -23,9 +25,16 @@ let package = Package(
             dependencies: ["CGVirtualDisplayPrivate"],
             linkerSettings: [.linkedFramework("CoreGraphics")]
         ),
+        .target(name: "WingpaneCaptureKit", linkerSettings: [
+            .linkedFramework("ScreenCaptureKit"), .linkedFramework("VideoToolbox"),
+            .linkedFramework("CoreMedia"), .linkedFramework("CoreVideo")
+        ]),
         .executableTarget(
             name: "wp-vdisplay",
             dependencies: ["WingpaneDisplayKit"]
         ),
+        .executableTarget(name: "wp-capture", dependencies: ["WingpaneDisplayKit", "WingpaneCaptureKit"], linkerSettings: [
+            .linkedFramework("AppKit"), .linkedFramework("ScreenCaptureKit")
+        ]),
     ]
 )
