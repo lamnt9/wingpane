@@ -159,3 +159,12 @@ pub enum GestureKind {
   ```
 * **RJ-2:** Host nhận `Hello` không hợp lệ → gửi `Reject(..)` rồi đóng kết nối, không im lặng bỏ qua. Client hiện lỗi theo lý do (UI S5).
 * **RJ-3:** `Hello` khi session đang `Active` → `Reject(Busy)`.
+
+---
+
+## 6. Đồng Bộ Đồng Hồ (HostTime) — v1, bổ sung 2026-11-24
+
+* **TS-1:** Thêm biến thể cuối `ControlMessage::HostTime { echo_ns: u64, host_us: u64 }` (sau `Reject`, đúng FR-4, không đổi `PROTO_VERSION`).
+* **TS-2:** Host trả lời mỗi `Ping(t)` bằng `Pong(t)` **rồi ngay sau đó** `HostTime { echo_ns: t, host_us: <đồng hồ monotonic host, cùng gốc với VideoPacket.pts_us> }`.
+* **TS-3:** Client ước lượng `offset_us = host_us − (t_send_us + t_recv_us)/2`, chỉ nhận mẫu có RTT nhỏ nhất trong cửa sổ 10 s gần nhất. Độ trễ một frame = `client_now_us_at_render + offset_us − pts_us`.
+* **TS-4:** Client cũ không biết `HostTime` thì phải bỏ qua an toàn (bộ giải mã Kotlin/Rust trả lỗi Decode cho tag lạ → client hiện tại coi là frame hỏng). Vì vậy **chỉ gửi HostTime khi client đã chứng minh hiểu nó**: MVP chấp nhận gửi luôn vì app và host phát hành cùng nhau; ghi chú để xử lý khi có tương thích ngược.
