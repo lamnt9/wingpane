@@ -9,7 +9,3 @@ description = "Core session, transport, and input smoothing for Wingpane"
 [dependencies]
 wingpane-proto = { path = "../wingpane-proto" }
 serde.workspace = true
-anyhow.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-tracing.workspace = true

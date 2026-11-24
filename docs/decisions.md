@@ -27,3 +27,11 @@ File này lưu trữ các quyết định kiến trúc quan trọng của dự �
 * **Trạng thái:** Approved
 * **Bối cảnh:** Tablet Android thường sử dụng màn hình OLED/AMOLED; người dùng đồ họa và lập trình viên làm việc nhiều trong bóng tối.
 * **Quyết định:** Áp dụng bộ Design Tokens Dark Mode OLED từ skill `ui-ux-pro-max`: nền đen thuần `#000000`, bề mặt `#0A0E27`, chữ `#F2F4FF`, kích thước nút chạm tối thiểu 48×48dp, tương phản ≥ 7:1.
+
+---
+
+## [ADR-004] 2026-11-24: Host MVP là daemon dòng lệnh Rust + Swift bridge
+* **Trạng thái:** Approved
+* **Bối cảnh:** `CGVirtualDisplay` là API riêng của Apple, chỉ gọi được từ Swift/ObjC. Dựng UI Tauri song song với spike pipeline video làm chậm Phase 1.
+* **Quyết định:** Phase 1 host macOS chạy dạng daemon CLI: Rust (`wingpane-core`) lo session/transport, Swift package `apps/desktop/macos-bridge` lo màn hình ảo, ScreenCaptureKit, VideoToolbox, gọi qua C ABI. Tauri 2 (ADR-002) bổ sung sau khi pipeline chạy ổn.
+* **Hệ quả:** Cần lớp FFI Swift↔Rust; UI desktop dời sang sau Phase 1.
