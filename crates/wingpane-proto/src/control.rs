@@ -34,6 +34,10 @@ pub enum ControlMessage {
     Pong(u64),
     Disconnect,
     Reject(RejectReason),
+    HostTime {
+        echo_ns: u64,
+        host_us: u64,
+    },
 }
 
 /// Why the host declined a connection. Variant order is part of the wire format.

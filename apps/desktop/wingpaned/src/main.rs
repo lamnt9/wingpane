@@ -15,13 +15,14 @@ use tokio::{
 use wingpane_core::{session::Session, transport::tcp::FramedTcp};
 use wingpane_proto::{ControlMessage, Packet, RejectReason, TouchPhase, VideoPacket};
 use wingpaned::{
-    busy_rejection, handle_control, handle_input, EncodedFrame, FrameQueue, InputSink,
-    SessionResources,
+    busy_rejection, handle_input, EncodedFrame, FrameQueue, InputSink, SessionResources,
 };
 
 struct CallbackContext {
     queue: Arc<FrameQueue>,
     handle: AtomicU64,
+    encoded: AtomicU64,
+    backlog_dropped: AtomicU64,
 }
 struct ContextGuard(usize);
 impl Drop for ContextGuard {
@@ -45,8 +46,9 @@ unsafe extern "C" fn on_frame(
         return;
     }
     let ctx = unsafe { &*(ctx.cast::<CallbackContext>()) };
+    ctx.encoded.fetch_add(1, Ordering::Relaxed);
     let bytes = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
-    ctx.queue.push_with_overflow(
+    if ctx.queue.push_with_overflow(
         EncodedFrame {
             data: bytes,
             keyframe: key != 0,
@@ -58,7 +60,9 @@ unsafe extern "C" fn on_frame(
                 unsafe { request_keyframe(handle) };
             }
         },
-    );
+    ) {
+        ctx.backlog_dropped.fetch_add(1, Ordering::Relaxed);
+    }
 }
 unsafe extern "C" {
     fn wp_capture_force_keyframe(handle: u64);
@@ -75,6 +79,14 @@ impl Drop for TestPatternGuard {
         if let Some(id) = self.0 {
             unsafe { wp_test_pattern_hide(id) };
         }
+    }
+}
+struct DisconnectLog {
+    reason: String,
+}
+impl Drop for DisconnectLog {
+    fn drop(&mut self) {
+        eprintln!("client disconnected: {}", self.reason);
     }
 }
 struct NativeInputSink(u32);
@@ -98,6 +110,7 @@ struct Options {
     bitrate: u32,
     test_pattern: bool,
     serial: Option<String>,
+    stats: bool,
 }
 fn options() -> Options {
     let mut o = Options {
@@ -107,6 +120,7 @@ fn options() -> Options {
         bitrate: 20_000_000,
         test_pattern: false,
         serial: std::env::var("ANDROID_SERIAL").ok(),
+        stats: false,
     };
     let mut a = std::env::args().skip(1);
     while let Some(k) = a.next() {
@@ -114,6 +128,7 @@ fn options() -> Options {
             "--port" => o.port = a.next().and_then(|v| v.parse().ok()).unwrap_or(7788),
             "--no-adb" => o.adb = false,
             "--test-pattern" => o.test_pattern = true,
+            "--stats" => o.stats = true,
             "--serial" => o.serial = a.next(),
             "--hidpi" => o.hidpi = a.next().map(|v| v != "false").unwrap_or(true),
             "--bitrate-mbps" => {
@@ -128,7 +143,7 @@ fn options() -> Options {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Usage: wingpaned [--help] [--port <port>] [--no-adb] [--serial <id>] [--hidpi <true|false>] [--bitrate-mbps <n>] [--test-pattern]");
+        println!("Usage: wingpaned [--help] [--port <port>] [--no-adb] [--serial <id>] [--hidpi <true|false>] [--bitrate-mbps <n>] [--test-pattern] [--stats]");
         return Ok(());
     }
     let mut opts = options();
@@ -144,12 +159,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .adb
         .then(|| tokio::spawn(adb_monitor(opts.port, opts.serial.clone().unwrap())));
     let mut sessions = JoinSet::new();
-    // 120 Hz gives AppKit enough pump opportunities to redraw the test pattern.
-    let mut ui_tick = tokio::time::interval(Duration::from_micros(8_333));
+    // Match the display refresh and avoid flooding the main queue with redundant AppKit pumps.
+    let mut ui_tick = tokio::time::interval(Duration::from_micros(16_667));
+    #[cfg(unix)]
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    #[cfg(unix)]
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
         tokio::select! {
             _ = ui_tick.tick(), if opts.test_pattern => unsafe { wp_test_pattern_pump() },
-            _ = tokio::signal::ctrl_c() => { sessions.abort_all(); while sessions.join_next().await.is_some() {} break; },
+            _ = async { #[cfg(unix)] { tokio::select! { _ = sigint.recv() => (), _ = sigterm.recv() => () } } #[cfg(not(unix))] { let _ = tokio::signal::ctrl_c().await; } } => { eprintln!("shutdown signal received"); sessions.abort_all(); while sessions.join_next().await.is_some() {} break; },
             result = listener.accept() => {
                 let (stream, peer) = result?;
                 if !sessions.is_empty() {
@@ -317,10 +336,15 @@ async fn adb(args: &[&str]) -> Result<std::process::Output, std::io::Error> {
 }
 
 async fn run_session(stream: TcpStream, opts: Options) {
+    let mut end_log = DisconnectLog {
+        reason: "session setup ended".to_owned(),
+    };
     let Ok(mut framed) = FramedTcp::new(stream) else {
+        end_log.reason = "invalid framed stream".into();
         return;
     };
     let Ok(Some(Packet::Control(first))) = framed.recv().await else {
+        end_log.reason = "peer closed before hello".into();
         return;
     };
     let dims = match &first {
@@ -328,6 +352,7 @@ async fn run_session(stream: TcpStream, opts: Options) {
         _ => (0, 0),
     };
     if !matches!(first, ControlMessage::Hello { .. }) {
+        end_log.reason = "expected hello".into();
         let _ = framed
             .send(&Packet::Control(ControlMessage::Reject(
                 RejectReason::InvalidHello,
@@ -337,9 +362,11 @@ async fn run_session(stream: TcpStream, opts: Options) {
     }
     let mut session = Session::new();
     let Some(mut reply) = session.handle_message(first) else {
+        end_log.reason = "hello ignored".into();
         return;
     };
     if matches!(reply.send, ControlMessage::Reject(_)) {
+        end_log.reason = "hello rejected".into();
         let _ = framed.send(&Packet::Control(reply.send)).await;
         return;
     }
@@ -359,6 +386,7 @@ async fn run_session(stream: TcpStream, opts: Options) {
     let display = match ffi::VirtualDisplay::create(logical_w, logical_h, hz, opts.hidpi) {
         Ok(d) => d,
         Err(e) => {
+            end_log.reason = "display creation failed".into();
             eprintln!("display creation failed: {e}");
             return;
         }
@@ -372,6 +400,8 @@ async fn run_session(stream: TcpStream, opts: Options) {
     let context = Box::new(CallbackContext {
         queue: queue.clone(),
         handle: AtomicU64::new(0),
+        encoded: AtomicU64::new(0),
+        backlog_dropped: AtomicU64::new(0),
     });
     let context_addr = Box::into_raw(context) as usize;
     let _context_guard = ContextGuard(context_addr);
@@ -389,6 +419,7 @@ async fn run_session(stream: TcpStream, opts: Options) {
     } {
         Ok(c) => c,
         Err(e) => {
+            end_log.reason = "capture start failed".into();
             eprintln!("capture start failed: {e}");
             return;
         }
@@ -403,6 +434,11 @@ async fn run_session(stream: TcpStream, opts: Options) {
         input: Box::new(NativeInputSink(display.id())),
         display: Box::new(display),
     };
+    let stats_queue = queue.clone();
+    let stats_sent = Arc::new(AtomicU64::new(0));
+    let writer_sent = stats_sent.clone();
+    let mut stats_tick = tokio::time::interval(Duration::from_secs(1));
+    let mut previous_stats = (0u64, 0u64, 0u64, 0u64);
     let (mut reader, mut writer) = framed.into_split();
     let (control_tx, mut control_rx) = mpsc::unbounded_channel::<Packet>();
     let writer_task = tokio::spawn(async move {
@@ -413,16 +449,48 @@ async fn run_session(stream: TcpStream, opts: Options) {
                 frame = queue.pop() => {
                     let p = Packet::Video(VideoPacket { frame_seq: seq, pts_us: frame.pts_us, is_keyframe: frame.keyframe, payload: frame.data }); seq = seq.wrapping_add(1);
                     if writer.send(&p).await.is_err() { break; }
+                    writer_sent.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
     });
     let mut warned_unsupported_input = false;
     loop {
-        match reader.recv().await {
-            Ok(Some(Packet::Control(ControlMessage::Disconnect))) | Ok(None) | Err(_) => break,
+        let received = if opts.stats {
+            tokio::select! {
+                result = reader.recv() => Some(result),
+                _ = stats_tick.tick() => {
+                    let ctx = unsafe { &*(context_addr as *const CallbackContext) };
+                    let handle = ctx.handle.load(Ordering::Relaxed);
+                    let current = (ffi::capture_frames_captured(handle), ctx.encoded.load(Ordering::Relaxed), stats_sent.load(Ordering::Relaxed), stats_queue.dropped_frames());
+                    eprintln!("capture stats: sck={} encoded={} sent={} backlog_dropped={}", current.0-previous_stats.0, current.1-previous_stats.1, current.2-previous_stats.2, current.3-previous_stats.3);
+                    previous_stats = current;
+                    None
+                }
+            }
+        } else {
+            Some(reader.recv().await)
+        };
+        let Some(received) = received else { continue };
+        match received {
+            Ok(Some(Packet::Control(ControlMessage::Disconnect))) => {
+                end_log.reason = "client requested disconnect".into();
+                break;
+            }
+            Ok(None) => {
+                end_log.reason = "peer closed connection".into();
+                break;
+            }
+            Err(e) => {
+                end_log.reason = format!("read error: {e}");
+                break;
+            }
             Ok(Some(Packet::Control(message))) => {
-                if let Some(reply) = handle_control(resources.capture.as_ref(), message) {
+                for reply in wingpaned::handle_control_messages(
+                    resources.capture.as_ref(),
+                    message,
+                    ffi::host_time_us(),
+                ) {
                     if control_tx.send(Packet::Control(reply)).is_err() {
                         break;
                     }

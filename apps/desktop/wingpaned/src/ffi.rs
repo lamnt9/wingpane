@@ -14,6 +14,8 @@ unsafe extern "C" {
     ) -> u64;
     fn wp_capture_force_keyframe(handle: u64);
     fn wp_capture_stop(handle: u64);
+    fn wp_capture_frames_captured(handle: u64) -> u64;
+    fn wp_host_time_us() -> u64;
 }
 
 pub type FrameCallback =
@@ -71,6 +73,12 @@ impl Capture {
     pub fn handle(&self) -> u64 {
         self.handle
     }
+}
+pub fn host_time_us() -> u64 {
+    unsafe { wp_host_time_us() }
+}
+pub fn capture_frames_captured(handle: u64) -> u64 {
+    unsafe { wp_capture_frames_captured(handle) }
 }
 impl Drop for Capture {
     fn drop(&mut self) {

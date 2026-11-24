@@ -40,6 +40,10 @@ class WingpaneClient(
     private val nanoTime: () -> Long = System::nanoTime,
     private val inputTimeUs: () -> Long = { SystemClock.uptimeNanos() / 1_000L },
 ) {
+    val clockOffsetEstimator = ClockOffsetEstimator()
+    @Volatile var clockSync: ClockOffsetEstimator.Estimate? = null
+        private set
+    @Volatile var onClockSync: ((ClockOffsetEstimator.Estimate) -> Unit)? = null
     private val mutableState = MutableStateFlow<ClientState>(ClientState.Waiting)
     val state: StateFlow<ClientState> = mutableState.asStateFlow()
     // Never conflate/drop here: H.264 P-frames depend on predecessors. Backlog is handled by
@@ -178,10 +182,13 @@ class WingpaneClient(
                         continue
                     }
                     val oldestUnansweredPing = AtomicLong(0L)
+                    val pingTimes = java.util.concurrent.ConcurrentHashMap<Long, Long>()
                     val pingTicker = launch {
                         while (isActive && !stopped.get()) {
                             delay(500)
                             val timestamp = nanoTime()
+                            pingTimes[timestamp] = timestamp
+                            while (pingTimes.size > 8) pingTimes.keys.minOrNull()?.let(pingTimes::remove)
                             withContext(ioDispatcher) { send(thisSocket, Packet.Control(ControlMessage.Ping(timestamp.toULong()))) }
                             oldestUnansweredPing.compareAndSet(0L, timestamp)
                         }
@@ -208,6 +215,13 @@ class WingpaneClient(
                             when (val packet = decoder.next() ?: break) {
                                 is Packet.Control -> when (val message = packet.message) {
                                     is ControlMessage.Pong -> if (message.timestampNs.toLong() == oldestUnansweredPing.get()) oldestUnansweredPing.set(0L)
+                                    is ControlMessage.HostTime -> {
+                                        val sent = pingTimes.remove(message.echoNs.toLong())
+                                        if (sent != null) clockOffsetEstimator.add(sent, nanoTime(), message.hostUs)?.let { sync ->
+                                            clockSync = sync
+                                            onClockSync?.invoke(sync)
+                                        }
+                                    }
                                     is ControlMessage.Reject -> {
                                         mutableState.value = ClientState.Rejected(message.reason)
                                         break@activeRead

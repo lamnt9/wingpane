@@ -3,6 +3,7 @@ import CoreVideo
 import Foundation
 import ScreenCaptureKit
 import VideoToolbox
+import Darwin
 
 public struct EncodedFrame: Sendable {
     public let annexB: Data
@@ -114,7 +115,10 @@ public final class CaptureEncoder: NSObject, SCStreamOutput, @unchecked Sendable
         }
         let now = Int64(DispatchTime.now().uptimeNanoseconds / 1000)
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample)
-        let ptsUs = presentationTime.isValid ? CMTimeConvertScale(presentationTime, timescale: 1_000_000, method: .default).value : startedAtUs
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let ptsTicks = presentationTime.isValid ? CMClockConvertHostTimeToSystemUnits(presentationTime) : 0
+        let ptsUs = presentationTime.isValid ? Int64(ptsTicks &* UInt64(timebase.numer) / UInt64(timebase.denom) / 1_000) : startedAtUs
         callback?(EncodedFrame(annexB: output, isKeyframe: key, ptsUs: ptsUs, encodeLatencyUs: now - startedAtUs))
     }
 }

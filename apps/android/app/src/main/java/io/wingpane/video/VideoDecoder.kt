@@ -16,7 +16,7 @@ class VideoDecoder(
     private val requestKeyframe: () -> Unit,
     private val statsChanged: (Stats) -> Unit = {},
 ) : AutoCloseable {
-    data class Stats(val fps: Float, val p50Us: Long, val p95Us: Long, val dropped: Long)
+    data class Stats(val fps: Float, val p50Us: Long, val p95Us: Long, val e2eP50Us: Long = 0, val e2eP95Us: Long = 0, val e2eMaxUs: Long = 0, val dropped: Long = 0, val offsetUs: Long = 0, val rttUs: Long = 0)
     private val thread = HandlerThread("Wingpane-VideoDecoder").apply { start() }
     private val handler = Handler(thread.looper)
     private var surface: Surface? = null
@@ -28,12 +28,18 @@ class VideoDecoder(
     private val queue = ArrayDeque<Pair<ByteArray, Long>>()
     private val inputSlots = ArrayDeque<Int>()
     private val latency = ArrayDeque<Long>()
+    private val e2eLatency = ArrayDeque<Long>()
     private val submittedAt = HashMap<Long, Long>()
     private val decoded = AtomicLong(0)
     private var intervalFrames = 0
     private var intervalStart = System.nanoTime()
     private var droppingUntilIdr = false
     @Volatile private var droppedCount = 0L
+    private var offsetUs = 0L
+    private var rttUs = 0L
+    private var lastLatencyLogNs = 0L
+
+    fun updateClockSync(offset: Long, rtt: Long) { handler.post { offsetUs = offset; rttUs = rtt } }
 
     fun setSurface(next: Surface?) { handler.post {
         if (surface === next) return@post
@@ -99,6 +105,8 @@ class VideoDecoder(
                         val submitted = submittedAt.remove(info.presentationTimeUs) ?: now
                         val delayUs = ((now - submitted).coerceAtLeast(0) / 1_000L)
                         latency.addLast(delayUs); while (latency.size > 120) latency.removeFirst()
+                        e2eLatency.addLast(now / 1_000L + offsetUs - info.presentationTimeUs)
+                        while (e2eLatency.size > 120) e2eLatency.removeFirst()
                         intervalFrames++
                         if (now - intervalStart >= 1_000_000_000L) {
                             val fps = intervalFrames * 1_000_000_000f / (now - intervalStart)
@@ -130,7 +138,14 @@ class VideoDecoder(
 
     private fun publishStats(fps: Float = 0f) {
         val values = latency.toList().sorted()
-        statsChanged(Stats(fps, percentile(values, .50), percentile(values, .95), droppedCount))
+        val e2e = e2eLatency.toList().sorted()
+        val stats = Stats(fps, percentile(values, .50), percentile(values, .95), percentile(e2e, .50), percentile(e2e, .95), e2e.lastOrNull() ?: 0, droppedCount, offsetUs, rttUs)
+        val logNow = System.nanoTime()
+        if (logNow - lastLatencyLogNs >= 1_000_000_000L) {
+            lastLatencyLogNs = logNow
+            android.util.Log.i("WingpaneLatency", "fps=${"%.1f".format(fps)} decode_p95_us=${stats.p95Us} e2e_p50_us=${stats.e2eP50Us} e2e_p95_us=${stats.e2eP95Us} dropped=${stats.dropped} offset_us=${stats.offsetUs} rtt_us=${stats.rttUs}")
+        }
+        statsChanged(stats)
     }
     private fun percentile(a: List<Long>, p: Double) = if (a.isEmpty()) 0L else a[((a.size - 1) * p).toInt()]
     private fun stopCodec() { try { codec?.stop() } catch (_: Throwable) {}; try { codec?.release() } catch (_: Throwable) {}; codec = null; queue.clear(); inputSlots.clear(); submittedAt.clear() }
