@@ -62,7 +62,8 @@ public final class CaptureEncoder: NSObject, SCStreamOutput, @unchecked Sendable
         let frameRateStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: Int(hz.rounded()) as CFNumber)
         let keyframeStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 10.0 as CFNumber)
         let sliceStatus = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxH264SliceBytes, value: 1200 as CFNumber)
-        print("WingpaneVideoToolbox maxFrameDelay=\(frameDelayStatus) expectedFrameRate=\(frameRateStatus) keyframeInterval10s=\(keyframeStatus) maxH264SliceBytes=\(sliceStatus)")
+        // stderr: stdout is reserved for wingpaned --status-json (docs/05-mac-app.md §2).
+        fputs("WingpaneVideoToolbox maxFrameDelay=\(frameDelayStatus) expectedFrameRate=\(frameRateStatus) keyframeInterval10s=\(keyframeStatus) maxH264SliceBytes=\(sliceStatus)\n", stderr)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
         VTCompressionSessionPrepareToEncodeFrames(session)
 
