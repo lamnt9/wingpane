@@ -121,3 +121,25 @@ pub enum GestureKind {
     PinchZoom(f32),
 }
 ```
+
+---
+
+## 4. Đóng Gói Gói Tin Trên Luồng Byte (Stream Framing) — v1
+
+Áp dụng cho USB (`adb reverse`, TCP). MVP dùng **một kết nối TCP duy nhất** cho cả control, video, input. QUIC (Phase 4) sẽ tách kênh.
+
+* **FR-1 — Khung:** `[len: u32 little-endian][body: len byte]`. `body` = `postcard` của `Packet`.
+* **FR-2 — Giới hạn:** `MAX_FRAME_LEN = 8 MiB`. `len == 0` hoặc `len > MAX_FRAME_LEN` → lỗi `FrameTooLarge`/`EmptyFrame`, bên nhận đóng kết nối.
+* **FR-3 — Phong bì:**
+  ```rust
+  pub enum Packet {
+      Control(ControlMessage),   // tag 0
+      Video(VideoPacket),        // tag 1
+      Input(InputPacket),        // tag 2
+  }
+  pub struct InputPacket { pub seq: u32, pub ts_us: u64, pub event: InputEvent }
+  ```
+* **FR-4 — Hợp đồng wire:** Thứ tự biến thể enum/field là hợp đồng. Chỉ thêm biến thể ở cuối; đổi/xoá/sắp lại → tăng `PROTO_VERSION`.
+* **FR-5 — Đồng hồ:** `VideoPacket.pts_us`, `InputPacket.ts_us` = micro-giây đồng hồ monotonic của bên gửi. `Ping/Pong` = nano-giây, bên gửi Ping tự tính RTT.
+* **FR-6 — Bộ giải mã tăng dần:** `FrameDecoder` nhận byte từng mảnh bất kỳ (`push(&[u8])`), trả lần lượt `Packet` hoàn chỉnh; byte rác/thiếu không bao giờ panic, chỉ trả lỗi.
+* **FR-7 — Thứ tự:** Bên gửi giữ thứ tự frame. Video chậm không được chặn Input: host ưu tiên ghi Input/Control trước Video khi hàng đợi gửi có cả hai.
