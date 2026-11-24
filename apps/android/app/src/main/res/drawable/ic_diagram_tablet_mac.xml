@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="360dp"
+    android:height="200dp"
+    android:viewportWidth="360"
+    android:viewportHeight="200">
+
+    <!-- Tablet outer frame -->
+    <path
+        android:fillColor="#0A0E27"
+        android:strokeColor="#5A6380"
+        android:strokeWidth="2"
+        android:pathData="M28,32 C28,25.37 33.37,20 40,20 L116,20 C122.63,20 128,25.37 128,32 L128,168 C128,174.63 122.63,180 116,180 L40,180 C33.37,180 28,174.63 28,168 Z" />
+
+    <!-- Tablet inner screen -->
+    <path
+        android:fillColor="#000000"
+        android:strokeColor="#5A6380"
+        android:strokeWidth="1"
+        android:pathData="M36,34 L120,34 L120,166 L36,166 Z" />
+
+    <!-- Tablet camera dot -->
+    <path
+        android:fillColor="#5A6380"
+        android:pathData="M78,27 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0" />
+
+    <!-- Wingpane emblem inside tablet -->
+    <path
+        android:fillColor="#0A0E27"
+        android:strokeColor="#7AA2FF"
+        android:strokeWidth="1.5"
+        android:pathData="M66,76 C66,72.69 68.69,70 72,70 L84,70 C87.31,70 90,72.69 90,76 L90,94 C90,97.31 87.31,100 84,100 L72,100 C68.69,100 66,97.31 66,94 Z" />
+    <path
+        android:strokeColor="#7AA2FF"
+        android:strokeWidth="1.5"
+        android:pathData="M72,77 L78,77 L78,93 L72,93 Z M78,80 L84,80 L84,90 L78,90" />
+
+    <!-- Left USB-C connector -->
+    <path
+        android:fillColor="#0A0E27"
+        android:strokeColor="#7AA2FF"
+        android:strokeWidth="1.5"
+        android:pathData="M128,100 L134,100 M134,96 L144,96 L144,104 L134,104 Z" />
+
+    <!-- Cable line between Tablet and Mac -->
+    <path
+        android:strokeColor="#7AA2FF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M146,100 L154,100 M160,101 L168,102 M174,103 L182,105 M188,106 L196,108 M202,109 L210,110" />
+
+    <!-- Right USB-C connector -->
+    <path
+        android:fillColor="#0A0E27"
+        android:strokeColor="#7AA2FF"
+        android:strokeWidth="1.5"
+        android:pathData="M212,106 L222,106 L222,114 L212,114 Z M222,110 L228,110" />
+
+    <!-- MacBook display frame -->
+    <path
+        android:fillColor="#0A0E27"
+        android:strokeColor="#5A6380"
+        android:strokeWidth="2"
+        android:pathData="M232,48 C232,43.58 235.58,40 240,40 L330,40 C334.42,40 338,43.58 338,48 L338,136 L232,136 Z" />
+
+    <!-- MacBook inner screen -->
+    <path
+        android:fillColor="#000000"
+        android:strokeColor="#5A6380"
+        android:strokeWidth="1"
+        android:pathData="M239,49 L331,49 L331,129 L239,129 Z" />
+
+    <!-- MacBook camera dot -->
+    <path
+        android:fillColor="#5A6380"
+        android:pathData="M285,44.5 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+
+    <!-- MacBook screen chevron -->
+    <path
+        android:strokeColor="#7AA2FF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M279,84 L285,93 L291,84" />
+
+    <!-- MacBook base -->
+    <path
+        android:fillColor="#121212"
+        android:strokeColor="#5A6380"
+        android:strokeWidth="2"
+        android:pathData="M220,136 L350,136 L346,144 C345,146 343,147 340,147 L230,147 C227,147 225,146 224,144 Z" />
+</vector>
