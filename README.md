@@ -53,6 +53,7 @@ Wingpane interfaces follow the **UI/UX Pro Max** guidelines:
 * [02 - Binary Framing & Transport Protocol](docs/02-protocol.md)
 * [03 - UI/UX 3-Mode Specification](docs/03-ui-ux-spec.md)
 * [04 - Engineering Roadmap & QC Gates](docs/04-roadmap.md)
+* [Open Source Reference Matrix (Kế hoạch tham khảo)](docs/references.md)
 * [Decisions Log (ADR)](docs/decisions.md)
 
 ---

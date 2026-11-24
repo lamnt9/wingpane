@@ -23,5 +23,9 @@ Thumbs.db
 .vscode/
 *.iml
 
+# Reference clones
+vendor-refs/
+vendor/
+
 # Session manager working states
 .session/
