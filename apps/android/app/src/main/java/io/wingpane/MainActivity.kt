@@ -33,13 +33,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var client: WingpaneClient
     private lateinit var decoder: VideoDecoder
     private var state by mutableStateOf("Connecting")
-    private var stats by mutableStateOf(VideoDecoder.Stats(0f, 0, 0, 0))
+    private var stats by mutableStateOf(VideoDecoder.Stats(0f, 0, 0, 0, 0, 0, 0, 0, 0))
     private var touchMapper: TouchMapper? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
         decoder = VideoDecoder({ lifecycleScope.launch { client.sendControl(ControlMessage.RequestKeyframe) } }) { stats = it }
         client = WingpaneClient()
+        client.onClockSync = { sync -> decoder.updateClockSync(sync.offsetUs, sync.rttUs) }
         client.connect()
         lifecycleScope.launch {
             var wasActive = false
@@ -67,7 +68,7 @@ class MainActivity : ComponentActivity() {
                     })
                     setOnTouchListener { view, event -> handleTouch(view, event) }
                 } }, modifier = Modifier.fillMaxSize())
-                Text("$state  ·  ${"%.1f".format(stats.fps)} fps  ·  p95 ${stats.p95Us} µs  ·  drop ${stats.dropped}", Modifier.align(Alignment.TopStart).padding(8.dp), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                Text("$state  ·  ${"%.1f".format(stats.fps)} fps  ·  e2e ${stats.e2eP50Us}/${stats.e2eP95Us} µs", Modifier.align(Alignment.TopStart).padding(8.dp), color = Color.White, style = MaterialTheme.typography.labelSmall)
             }
         }
     }

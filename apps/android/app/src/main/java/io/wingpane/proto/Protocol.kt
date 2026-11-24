@@ -44,6 +44,7 @@ sealed interface ControlMessage {
     data class Pong(val timestampNs: ULong) : ControlMessage
     data object Disconnect : ControlMessage
     data class Reject(val reason: RejectReason, val hostVersion: UShort? = null) : ControlMessage
+    data class HostTime(val echoNs: ULong, val hostUs: ULong) : ControlMessage
 }
 sealed interface Packet {
     data class Control(val message: ControlMessage) : Packet
@@ -98,6 +99,7 @@ private object Codec {
         is ControlMessage.SetMode->{w.varint(2u);w.varint(c.mode.ordinal.toULong())}; ControlMessage.RequestKeyframe->w.varint(3u)
         is ControlMessage.Ping->{w.varint(4u);w.varint(c.timestampNs)};is ControlMessage.Pong->{w.varint(5u);w.varint(c.timestampNs)};ControlMessage.Disconnect->w.varint(6u)
         is ControlMessage.Reject->{w.varint(7u);w.varint(c.reason.ordinal.toULong());if(c.reason==RejectReason.VersionMismatch)w.varint((c.hostVersion?:throw FrameException("missing host version")).toULong())}
+        is ControlMessage.HostTime->{w.varint(8u);w.varint(c.echoNs);w.varint(c.hostUs)}
     }}
     private fun input(w:Writer,v:InputPacket){w.varint(v.seq.toULong());w.varint(v.tsUs);when(val e=v.event){
         is InputEvent.Pen->{w.varint(0u);w.float(e.x);w.float(e.y);w.float(e.pressure);w.i8(e.tiltX);w.i8(e.tiltY);w.bool(e.isDown);w.bool(e.isHover);w.u8(e.buttonMask);w.varint(e.timestampUs)}
@@ -116,11 +118,12 @@ private object Codec {
     }
     private fun mode(r:Reader)=Mode.entries[r.enum(0,2)]
     private fun codec(r:Reader)=VideoCodec.entries[r.enum(0,1)]
-    private fun decodeControl(r:Reader):ControlMessage=when(r.enum(0,7)){
+    private fun decodeControl(r:Reader):ControlMessage=when(r.enum(0,8)){
         0->{val ver=r.varint().toUShort();val name=r.string();val size=r.varint().toUInt() to r.varint().toUInt();val codecs=List(r.count()){codec(r)};ControlMessage.Hello(ver,name,size,codecs,r.varint().toUInt())}
         1->{val m=mode(r);val has=r.byte();val s=when(has){0->null;1->Triple(r.varint().toUInt(),r.varint().toUInt(),r.varint().toUInt());else->throw FrameException("invalid option")};ControlMessage.Accept(m,s,codec(r),r.varint().toUInt())}
         2->ControlMessage.SetMode(mode(r));3->ControlMessage.RequestKeyframe;4->ControlMessage.Ping(r.varint());5->ControlMessage.Pong(r.varint());6->ControlMessage.Disconnect
-        else->{val reason=RejectReason.entries[r.enum(0,3)];ControlMessage.Reject(reason,if(reason==RejectReason.VersionMismatch)r.varint().toUShort() else null)}
+        7->{val reason=RejectReason.entries[r.enum(0,3)];ControlMessage.Reject(reason,if(reason==RejectReason.VersionMismatch)r.varint().toUShort() else null)}
+        else->ControlMessage.HostTime(r.varint(),r.varint())
     }
     private fun decodeInput(r:Reader):InputPacket {val seq=r.varint().toUInt();val ts=r.varint();val e=when(r.enum(0,5)){
         0->InputEvent.Pen(r.float(),r.float(),r.float(),r.byte().toByte(),r.byte().toByte(),r.bool(),r.bool(),r.byte().toUByte(),r.varint())

@@ -15,6 +15,7 @@ class ProtocolTest {
             "control_ping" to ControlMessage.Ping(0x0102030405060708uL),
             "control_pong" to ControlMessage.Pong(0x0807060504030201uL),
             "control_disconnect" to ControlMessage.Disconnect,
+            "control_host_time" to ControlMessage.HostTime(0x1020304050607080uL, 0x2010203040506070uL),
             "reject_version_mismatch" to ControlMessage.Reject(RejectReason.VersionMismatch,1u),
             "reject_unsupported_codec" to ControlMessage.Reject(RejectReason.UnsupportedCodec),
             "reject_invalid_hello" to ControlMessage.Reject(RejectReason.InvalidHello),

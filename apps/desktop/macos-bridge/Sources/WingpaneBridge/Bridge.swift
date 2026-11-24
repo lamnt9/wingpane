@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import AppKit
 import ApplicationServices
 import WingpaneCaptureKit
@@ -78,6 +79,13 @@ private final class PointerState: @unchecked Sendable {
 @_cdecl("wp_input_trusted")
 public func wp_input_trusted() -> Bool { AXIsProcessTrusted() }
 
+@_cdecl("wp_host_time_us")
+public func wp_host_time_us() -> UInt64 {
+    var info = mach_timebase_info_data_t()
+    mach_timebase_info(&info)
+    return mach_absolute_time() &* UInt64(info.numer) / UInt64(info.denom) / 1_000
+}
+
 @_cdecl("wp_input_release_all")
 public func wp_input_release_all() {
     PointerState.shared.releaseAll()
@@ -110,16 +118,21 @@ public func wp_test_pattern_hide(_ displayID: UInt32) {
 /// is enabled, so AppKit timers and drawing continue without a separate NSApp.run().
 @_cdecl("wp_test_pattern_pump")
 public func wp_test_pattern_pump() {
-    DispatchQueue.main.async {
+    // The daemon's main thread runs the tokio runtime, not a CFRunLoop, so blocks posted to
+    // DispatchQueue.main (show/hide) only execute when this pump spins the run loop. It must
+    // therefore run INLINE when called on the main thread; dispatching it would never run.
+    let body = {
         MainActor.assumeIsolated {
             let app = NSApplication.shared
-            CaptureTestPattern.shared.tick()
+            // nextEvent spins the main run loop, which also drains DispatchQueue.main.
             while let event = app.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) {
                 app.sendEvent(event)
             }
+            CaptureTestPattern.shared.tick()
             app.updateWindows()
         }
     }
+    if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
 }
 
 /// Blocking C entry points must be called from a non-main thread. Async framework
@@ -165,4 +178,9 @@ public func wp_capture_stop(_ handle: UInt64) {
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached { await capture.encoder.stop(); semaphore.signal() }
     semaphore.wait()
+}
+
+@_cdecl("wp_capture_frames_captured")
+public func wp_capture_frames_captured(_ handle: UInt64) -> UInt64 {
+    UInt64(CaptureRegistry.shared.get(handle)?.encoder.framesCaptured ?? 0)
 }

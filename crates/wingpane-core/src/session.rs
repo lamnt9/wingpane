@@ -10,6 +10,7 @@ pub enum SessionState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reply {
     pub send: ControlMessage,
+    pub after: Option<ControlMessage>,
     pub close: bool,
 }
 
@@ -34,6 +35,7 @@ impl Session {
                 if self.state != SessionState::Disconnected {
                     return Some(Reply {
                         send: ControlMessage::Reject(RejectReason::Busy),
+                        after: None,
                         close: true,
                     });
                 }
@@ -51,6 +53,7 @@ impl Session {
                 if let Some(reason) = reason {
                     return Some(Reply {
                         send: ControlMessage::Reject(reason),
+                        after: None,
                         close: true,
                     });
                 }
@@ -63,6 +66,7 @@ impl Session {
                         selected_codec: VideoCodec::H264,
                         bitrate_kbps: 20_000,
                     },
+                    after: None,
                     close: false,
                 })
             }
@@ -72,6 +76,10 @@ impl Session {
             }
             ControlMessage::Ping(ts) => Some(Reply {
                 send: ControlMessage::Pong(ts),
+                after: Some(ControlMessage::HostTime {
+                    echo_ns: ts,
+                    host_us: 0,
+                }),
                 close: false,
             }),
             ControlMessage::Disconnect => {
@@ -85,5 +93,25 @@ impl Session {
 impl Default for Session {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ping_reply_is_pong_then_host_time() {
+        let mut session = Session::new();
+        let reply = session
+            .handle_message(ControlMessage::Ping(0x1_0000_0001))
+            .unwrap();
+        assert_eq!(reply.send, ControlMessage::Pong(0x1_0000_0001));
+        assert_eq!(
+            reply.after,
+            Some(ControlMessage::HostTime {
+                echo_ns: 0x1_0000_0001,
+                host_us: 0
+            })
+        );
     }
 }

@@ -207,6 +207,14 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
         ),
         ("reject_busy", ControlMessage::Reject(RejectReason::Busy)),
     ];
+    let mut controls = controls;
+    controls.push((
+        "control_host_time",
+        ControlMessage::HostTime {
+            echo_ns: 0x1020_3040_5060_7080,
+            host_us: 0x2010_2030_4050_6070,
+        },
+    ));
     let mut packets: Vec<(&'static str, Packet)> = controls
         .into_iter()
         .map(|(n, c)| (n, Packet::Control(c)))

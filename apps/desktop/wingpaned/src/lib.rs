@@ -1,7 +1,10 @@
 //! Host session loop and bounded, latency-oriented frame queue.
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 use tokio::sync::Notify;
 
@@ -17,6 +20,7 @@ pub struct FrameQueue {
     frames: Mutex<VecDeque<EncodedFrame>>,
     awaiting_keyframe: Mutex<bool>,
     ready: Notify,
+    dropped_frames: AtomicU64,
 }
 impl FrameQueue {
     pub fn push_with_overflow(&self, frame: EncodedFrame, refresh: impl FnOnce()) -> bool {
@@ -32,10 +36,14 @@ impl FrameQueue {
         let overflow = q.len() >= 3;
         let mut awaiting = self.awaiting_keyframe.lock().expect("frame queue poisoned");
         if overflow && !*awaiting {
+            let previous = q.len();
             q.retain(|queued| queued.keyframe);
+            self.dropped_frames
+                .fetch_add((previous - q.len()) as u64, Ordering::Relaxed);
             *awaiting = true;
         }
         if *awaiting && !frame.keyframe {
+            self.dropped_frames.fetch_add(1, Ordering::Relaxed);
             return overflow;
         }
         if frame.keyframe {
@@ -43,6 +51,7 @@ impl FrameQueue {
         }
         if q.len() >= 3 {
             q.pop_front();
+            self.dropped_frames.fetch_add(1, Ordering::Relaxed);
         }
         q.push_back(frame);
         drop(q);
@@ -68,6 +77,9 @@ impl FrameQueue {
     }
     pub fn is_empty(&self) -> bool {
         self.frames.lock().expect("frame queue poisoned").is_empty()
+    }
+    pub fn dropped_frames(&self) -> u64 {
+        self.dropped_frames.load(Ordering::Relaxed)
     }
 }
 
@@ -126,6 +138,21 @@ pub fn handle_control(
         ControlMessage::Ping(ts) => Some(ControlMessage::Pong(ts)),
         ControlMessage::Disconnect => None,
         _ => None,
+    }
+}
+
+pub fn handle_control_messages(
+    source: &dyn CaptureSource,
+    message: wingpane_proto::ControlMessage,
+    host_us: u64,
+) -> Vec<wingpane_proto::ControlMessage> {
+    use wingpane_proto::ControlMessage;
+    match message {
+        ControlMessage::Ping(echo_ns) => vec![
+            ControlMessage::Pong(echo_ns),
+            ControlMessage::HostTime { echo_ns, host_us },
+        ],
+        other => handle_control(source, other).into_iter().collect(),
     }
 }
 
