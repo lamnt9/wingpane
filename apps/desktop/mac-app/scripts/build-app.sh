@@ -5,8 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PACKAGE_DIR/../../.." && pwd)"
 
-cd "$PACKAGE_DIR"
+echo "▶ Building wingpaned (Rust daemon + Swift bridge)…"
+(cd "$REPO_ROOT" && cargo build -p wingpaned --release)
 
+cd "$PACKAGE_DIR"
+echo "▶ Building menu bar app…"
 swift build -c release
 
 BIN_DIR="$(swift build -c release --show-bin-path)"
@@ -22,10 +25,11 @@ cp "$BIN_DIR/Wingpane" "$MACOS_DIR/Wingpane"
 chmod +x "$MACOS_DIR/Wingpane"
 
 DAEMON_BIN="$REPO_ROOT/target/release/wingpaned"
-if [ -f "$DAEMON_BIN" ]; then
-    cp "$DAEMON_BIN" "$RESOURCES_DIR/wingpaned"
-    chmod +x "$RESOURCES_DIR/wingpaned"
+if [ ! -x "$DAEMON_BIN" ]; then
+    echo "✗ $DAEMON_BIN not found" >&2; exit 1
 fi
+cp "$DAEMON_BIN" "$RESOURCES_DIR/wingpaned"
+chmod +x "$RESOURCES_DIR/wingpaned"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -60,4 +64,14 @@ cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
 </plist>
 EOF
 
-codesign --force --deep -s - "$APP_BUNDLE"
+# Sign the nested daemon first, then the bundle (ad-hoc; local use only).
+codesign --force -s - "$RESOURCES_DIR/wingpaned"
+codesign --force -s - "$APP_BUNDLE"
+codesign --verify --strict --deep "$APP_BUNDLE"
+echo "✔ $APP_BUNDLE"
+
+if [ "${1:-}" = "--install" ]; then
+    rm -rf /Applications/Wingpane.app
+    cp -R "$APP_BUNDLE" /Applications/Wingpane.app
+    echo "✔ Installed /Applications/Wingpane.app"
+fi

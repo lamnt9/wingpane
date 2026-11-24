@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = PermissionsChecker.hasScreenRecordingPermission()
         _ = PermissionsChecker.hasAccessibilityPermission(prompt: false)
+        // Start immediately: the daemon just waits until a phone is connected (decided 2026-11-25).
+        _ = controller?.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

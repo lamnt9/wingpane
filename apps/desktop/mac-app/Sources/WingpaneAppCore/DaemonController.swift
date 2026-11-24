@@ -188,7 +188,7 @@ public final class DaemonController: ObservableObject, @unchecked Sendable {
 
         let stdoutPipe = Pipe()
         proc.standardOutput = stdoutPipe
-        proc.standardError = FileHandle.nullDevice
+        proc.standardError = Self.daemonLogHandle() ?? FileHandle.nullDevice
 
         let doneSemaphore = DispatchSemaphore(value: 0)
 
@@ -242,6 +242,25 @@ public final class DaemonController: ObservableObject, @unchecked Sendable {
         }
 
         return true
+    }
+
+    /// Daemon stderr (human-readable log) → ~/Library/Logs/Wingpane/wingpaned.log.
+    /// Never leave stderr on an unread Pipe: a full pipe would block the daemon.
+    static func daemonLogHandle() -> FileHandle? {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Wingpane", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("wingpaned.log")
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? NSNumber, size.intValue > 5_000_000 {
+            try? FileManager.default.removeItem(at: url) // simple rotation: keep it under 5 MB
+        }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return nil }
+        handle.seekToEndOfFile()
+        return handle
     }
 
     public func stop(gracePeriod: TimeInterval? = nil) {
