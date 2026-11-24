@@ -13,8 +13,11 @@ use tokio::{
     task::JoinSet,
 };
 use wingpane_core::{session::Session, transport::tcp::FramedTcp};
-use wingpane_proto::{ControlMessage, Packet, RejectReason, VideoPacket};
-use wingpaned::{busy_rejection, handle_control, EncodedFrame, FrameQueue, SessionResources};
+use wingpane_proto::{ControlMessage, Packet, RejectReason, TouchPhase, VideoPacket};
+use wingpaned::{
+    busy_rejection, handle_control, handle_input, EncodedFrame, FrameQueue, InputSink,
+    SessionResources,
+};
 
 struct CallbackContext {
     queue: Arc<FrameQueue>,
@@ -62,6 +65,9 @@ unsafe extern "C" {
     fn wp_test_pattern_show(display_id: u32);
     fn wp_test_pattern_hide(display_id: u32);
     fn wp_test_pattern_pump();
+    fn wp_input_pointer(display_id: u32, x: f64, y: f64, phase: u8);
+    fn wp_input_release_all();
+    fn wp_input_trusted() -> bool;
 }
 struct TestPatternGuard(Option<u32>);
 impl Drop for TestPatternGuard {
@@ -69,6 +75,15 @@ impl Drop for TestPatternGuard {
         if let Some(id) = self.0 {
             unsafe { wp_test_pattern_hide(id) };
         }
+    }
+}
+struct NativeInputSink(u32);
+impl InputSink for NativeInputSink {
+    fn pointer(&self, x: f32, y: f32, phase: TouchPhase) {
+        unsafe { wp_input_pointer(self.0, f64::from(x), f64::from(y), phase as u8) };
+    }
+    fn release_all(&self) {
+        unsafe { wp_input_release_all() }
     }
 }
 unsafe fn request_keyframe(handle: u64) {
@@ -82,6 +97,7 @@ struct Options {
     hidpi: bool,
     bitrate: u32,
     test_pattern: bool,
+    serial: Option<String>,
 }
 fn options() -> Options {
     let mut o = Options {
@@ -90,6 +106,7 @@ fn options() -> Options {
         hidpi: true,
         bitrate: 20_000_000,
         test_pattern: false,
+        serial: std::env::var("ANDROID_SERIAL").ok(),
     };
     let mut a = std::env::args().skip(1);
     while let Some(k) = a.next() {
@@ -97,6 +114,7 @@ fn options() -> Options {
             "--port" => o.port = a.next().and_then(|v| v.parse().ok()).unwrap_or(7788),
             "--no-adb" => o.adb = false,
             "--test-pattern" => o.test_pattern = true,
+            "--serial" => o.serial = a.next(),
             "--hidpi" => o.hidpi = a.next().map(|v| v != "false").unwrap_or(true),
             "--bitrate-mbps" => {
                 o.bitrate = a.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(20) * 1_000_000
@@ -109,15 +127,25 @@ fn options() -> Options {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let opts = options();
+    if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
+        println!("Usage: wingpaned [--help] [--port <port>] [--no-adb] [--serial <id>] [--hidpi <true|false>] [--bitrate-mbps <n>] [--test-pattern]");
+        return Ok(());
+    }
+    let mut opts = options();
+    if !unsafe { wp_input_trusted() } {
+        eprintln!("Grant Accessibility to this terminal: System Settings › Privacy & Security › Accessibility");
+    }
     if opts.adb {
-        wait_for_adb(opts.port).await?;
+        opts.serial = Some(wait_for_adb(opts.port, opts.serial.as_deref()).await?);
     }
     let listener = TcpListener::bind(("127.0.0.1", opts.port)).await?;
     eprintln!("wingpaned listening on 127.0.0.1:{}", opts.port);
-    let adb_task = opts.adb.then(|| tokio::spawn(adb_monitor(opts.port)));
+    let adb_task = opts
+        .adb
+        .then(|| tokio::spawn(adb_monitor(opts.port, opts.serial.clone().unwrap())));
     let mut sessions = JoinSet::new();
-    let mut ui_tick = tokio::time::interval(Duration::from_millis(16));
+    // 120 Hz gives AppKit enough pump opportunities to redraw the test pattern.
+    let mut ui_tick = tokio::time::interval(Duration::from_micros(8_333));
     loop {
         tokio::select! {
             _ = ui_tick.tick(), if opts.test_pattern => unsafe { wp_test_pattern_pump() },
@@ -139,7 +167,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = task.await;
     }
     if opts.adb {
-        let _ = adb(&["reverse", "--remove", &format!("tcp:{}", opts.port)]).await;
+        let _ = adb(&[
+            "-s",
+            opts.serial.as_deref().unwrap(),
+            "reverse",
+            "--remove",
+            &format!("tcp:{}", opts.port),
+        ])
+        .await;
     }
     eprintln!("wingpaned stopped");
     Ok(())
@@ -151,7 +186,30 @@ async fn reject_busy(stream: TcpStream) {
     }
 }
 
-async fn wait_for_adb(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+async fn wait_for_adb(
+    port: u16,
+    requested: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(serial) = requested {
+        loop {
+            let state = adb(&["-s", serial, "get-state"]).await?;
+            if state.status.success() && String::from_utf8_lossy(&state.stdout).trim() == "device" {
+                let spec = format!("tcp:{port}");
+                let result = adb(&["-s", serial, "reverse", &spec, &spec]).await?;
+                if result.status.success() {
+                    eprintln!("adb reverse active for {serial}");
+                    return Ok(serial.to_owned());
+                }
+                eprintln!(
+                    "adb reverse failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            } else {
+                eprintln!("waiting for selected adb device {serial}");
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
     loop {
         let out = match adb(&["devices"]).await {
             Ok(v) => v,
@@ -176,9 +234,25 @@ async fn wait_for_adb(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         if devices.iter().any(|(_, s)| *s == "unauthorized") {
             eprintln!("adb device unauthorized: accept the USB debugging prompt on the tablet");
         }
-        if ready.len() == 1 && devices.len() == 1 {
+        let serial = if ready.len() == 1 && devices.len() == 1 {
+            ready[0].0.to_owned()
+        } else if devices.len() > 1 {
+            eprintln!("Multiple adb devices are attached:");
+            for (id, state) in &devices {
+                eprintln!("  {id}\t{state}");
+            }
+            return Err("select a device with --serial <id> or ANDROID_SERIAL".into());
+        } else {
+            eprintln!(
+                "waiting for one adb device in device state (found {})",
+                ready.len()
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        };
+        {
             let spec = format!("tcp:{port}");
-            let result = adb(&["-s", ready[0].0, "reverse", &spec, &spec]).await?;
+            let result = adb(&["-s", &serial, "reverse", &spec, &spec]).await?;
             if !result.status.success() {
                 eprintln!(
                     "adb reverse failed: {}",
@@ -187,62 +261,37 @@ async fn wait_for_adb(port: u16) -> Result<(), Box<dyn std::error::Error>> {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
-            eprintln!("adb reverse active for {}", ready[0].0);
-            return Ok(());
+            eprintln!("adb reverse active for {serial}");
+            return Ok(serial);
         }
-        eprintln!(
-            "waiting for exactly one adb device in device state (found {})",
-            ready.len()
-        );
-        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
-async fn adb_monitor(port: u16) {
-    let mut active: Option<String> = None;
+async fn adb_monitor(port: u16, serial: String) {
+    let mut reverse_active = true;
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let out = match adb(&["devices"]).await {
+        let state = match adb(&["-s", &serial, "get-state"]).await {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("adb monitor: {e}");
-                active = None;
                 continue;
             }
         };
-        let text = String::from_utf8_lossy(&out.stdout);
-        let devices: Vec<_> = text
-            .lines()
-            .skip(1)
-            .filter_map(|l| {
-                let mut p = l.split_whitespace();
-                Some((p.next()?.to_owned(), p.next()?.to_owned()))
-            })
-            .collect();
-        if devices.iter().any(|(_, state)| state == "unauthorized") {
-            eprintln!("adb device unauthorized: accept the USB debugging prompt on the tablet");
-        }
-        let ready: Vec<_> = devices
-            .iter()
-            .filter(|(_, state)| state == "device")
-            .collect();
-        if ready.len() != 1 || devices.len() != 1 {
-            active = None;
-            continue;
-        }
-        let serial = ready[0].0.clone();
-        if active.as_deref() != Some(serial.as_str()) {
+        if state.status.success() && String::from_utf8_lossy(&state.stdout).trim() == "device" {
+            if reverse_active {
+                continue;
+            }
             let spec = format!("tcp:{port}");
             match adb(&["-s", &serial, "reverse", &spec, &spec]).await {
-                Ok(result) if result.status.success() => {
-                    eprintln!("adb reverse restored for {serial}");
-                    active = Some(serial);
-                }
+                Ok(result) if result.status.success() => reverse_active = true,
                 Ok(result) => eprintln!(
                     "adb reverse failed: {}",
                     String::from_utf8_lossy(&result.stderr)
                 ),
                 Err(e) => eprintln!("adb reverse failed: {e}"),
             }
+        } else {
+            reverse_active = false;
         }
     }
 }
@@ -351,6 +400,7 @@ async fn run_session(stream: TcpStream, opts: Options) {
     }
     let resources = SessionResources {
         capture: Box::new(capture),
+        input: Box::new(NativeInputSink(display.id())),
         display: Box::new(display),
     };
     let (mut reader, mut writer) = framed.into_split();
@@ -367,6 +417,7 @@ async fn run_session(stream: TcpStream, opts: Options) {
             }
         }
     });
+    let mut warned_unsupported_input = false;
     loop {
         match reader.recv().await {
             Ok(Some(Packet::Control(ControlMessage::Disconnect))) | Ok(None) | Err(_) => break,
@@ -375,6 +426,12 @@ async fn run_session(stream: TcpStream, opts: Options) {
                     if control_tx.send(Packet::Control(reply)).is_err() {
                         break;
                     }
+                }
+            }
+            Ok(Some(Packet::Input(input))) => {
+                if !handle_input(resources.input.as_ref(), input) && !warned_unsupported_input {
+                    eprintln!("ignoring unsupported input event kinds (only Touch is handled)");
+                    warned_unsupported_input = true;
                 }
             }
             Ok(Some(_)) => {}

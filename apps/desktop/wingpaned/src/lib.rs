@@ -85,14 +85,31 @@ pub trait DisplayResource: Send {
     fn destroy(&self);
 }
 
+/// Native input boundary. Tests use a fake sink so no real pointer events are posted.
+pub trait InputSink: Send {
+    fn pointer(&self, x: f32, y: f32, phase: wingpane_proto::TouchPhase);
+    fn release_all(&self);
+}
+
 pub struct SessionResources {
     pub capture: Box<dyn CaptureSource>,
+    pub input: Box<dyn InputSink>,
     pub display: Box<dyn DisplayResource>,
 }
 impl Drop for SessionResources {
     fn drop(&mut self) {
+        self.input.release_all();
         self.capture.stop();
         self.display.destroy();
+    }
+}
+
+pub fn handle_input(sink: &dyn InputSink, packet: wingpane_proto::InputPacket) -> bool {
+    if let wingpane_proto::InputEvent::Touch { x, y, phase, .. } = packet.event {
+        sink.pointer(x, y, phase);
+        true
+    } else {
+        false
     }
 }
 
@@ -119,6 +136,12 @@ pub fn busy_rejection() -> wingpane_proto::ControlMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct NoopInput;
+    impl InputSink for NoopInput {
+        fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {}
+        fn release_all(&self) {}
+    }
     fn f(n: u8, keyframe: bool) -> EncodedFrame {
         EncodedFrame {
             data: vec![n],
@@ -187,32 +210,101 @@ mod tests {
     }
 
     #[test]
-    fn session_resource_drop_stops_capture_and_destroys_display_on_eof() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        struct Fake(Arc<AtomicUsize>);
-        impl CaptureSource for Fake {
+    fn session_resource_drop_releases_input_before_destroying_display() {
+        struct OrderedInput(Arc<Mutex<Vec<&'static str>>>);
+        impl InputSink for OrderedInput {
+            fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {
+                self.0.lock().unwrap().push("pointer");
+            }
+            fn release_all(&self) {
+                self.0.lock().unwrap().push("release");
+            }
+        }
+        struct OrderedCapture(Arc<Mutex<Vec<&'static str>>>);
+        impl CaptureSource for OrderedCapture {
             fn force_keyframe(&self) {}
             fn stop(&self) {
-                self.0.fetch_add(1, Ordering::SeqCst);
+                self.0.lock().unwrap().push("stop");
             }
         }
-        impl DisplayResource for Fake {
+        struct OrderedDisplay(Arc<Mutex<Vec<&'static str>>>);
+        impl DisplayResource for OrderedDisplay {
             fn destroy(&self) {
-                self.0.fetch_add(1, Ordering::SeqCst);
+                self.0.lock().unwrap().push("destroy");
             }
         }
-        let calls = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(Mutex::new(Vec::new()));
         let resources = SessionResources {
-            capture: Box::new(Fake(calls.clone())),
-            display: Box::new(Fake(calls.clone())),
+            capture: Box::new(OrderedCapture(calls.clone())),
+            input: Box::new(OrderedInput(calls.clone())),
+            display: Box::new(OrderedDisplay(calls.clone())),
         };
-        drop(resources); // the session loop drops this guard on EOF/disconnect/error
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(handle_input(
+            resources.input.as_ref(),
+            wingpane_proto::InputPacket {
+                seq: 1,
+                ts_us: 1,
+                event: wingpane_proto::InputEvent::Touch {
+                    pointer_id: 0,
+                    x: 0.5,
+                    y: 0.5,
+                    phase: wingpane_proto::TouchPhase::Down,
+                },
+            },
+        ));
+        drop(resources); // EOF/error/task cancellation all release before display destruction.
+        assert_eq!(
+            *calls.lock().unwrap(),
+            ["pointer", "release", "stop", "destroy"]
+        );
+    }
+
+    #[test]
+    fn touch_input_packets_reach_fake_sink_in_order() {
+        struct FakeInput(Mutex<Vec<(f32, f32, wingpane_proto::TouchPhase)>>);
+        impl InputSink for FakeInput {
+            fn pointer(&self, x: f32, y: f32, phase: wingpane_proto::TouchPhase) {
+                self.0.lock().unwrap().push((x, y, phase));
+            }
+            fn release_all(&self) {}
+        }
+        let sink = FakeInput(Mutex::new(Vec::new()));
+        for (seq, phase) in [
+            (1, wingpane_proto::TouchPhase::Down),
+            (2, wingpane_proto::TouchPhase::Move),
+            (3, wingpane_proto::TouchPhase::Up),
+        ] {
+            assert!(handle_input(
+                &sink,
+                wingpane_proto::InputPacket {
+                    seq,
+                    ts_us: seq.into(),
+                    event: wingpane_proto::InputEvent::Touch {
+                        pointer_id: 0,
+                        x: seq as f32 / 10.0,
+                        y: 0.5,
+                        phase,
+                    },
+                }
+            ));
+        }
+        let got = sink.0.lock().unwrap();
+        assert_eq!(
+            got.iter().map(|(_, _, p)| *p).collect::<Vec<_>>(),
+            [
+                wingpane_proto::TouchPhase::Down,
+                wingpane_proto::TouchPhase::Move,
+                wingpane_proto::TouchPhase::Up
+            ]
+        );
+        assert_eq!(
+            got.iter().map(|(x, _, _)| *x).collect::<Vec<_>>(),
+            [0.1, 0.2, 0.3]
+        );
     }
 
     #[tokio::test]
     async fn eof_from_framed_peer_drops_fake_session_resources() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::net::{TcpListener, TcpStream};
         use wingpane_core::transport::tcp::FramedTcp;
         struct Fake(Arc<AtomicUsize>);
@@ -238,6 +330,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         drop(SessionResources {
             capture: Box::new(Fake(calls.clone())),
+            input: Box::new(NoopInput),
             display: Box::new(Fake(calls.clone())),
         });
         assert_eq!(calls.load(Ordering::SeqCst), 2);

@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ApplicationServices
 import WingpaneCaptureKit
 import WingpaneDisplayKit
 
@@ -40,6 +41,59 @@ private final class CaptureRegistry: @unchecked Sendable {
     func remove(_ id: UInt64) -> CaptureHandle? { lock.lock(); defer { lock.unlock() }; return items.removeValue(forKey: id) }
 }
 
+private final class PointerState: @unchecked Sendable {
+    static let shared = PointerState()
+    private let lock = NSLock()
+    private var buttonDown = false
+    private var lastLocation = CGPoint.zero
+
+    func releaseAll() {
+        lock.lock(); defer { lock.unlock() }
+        guard buttonDown else { return }
+        postPointerEvent(.leftMouseUp, at: lastLocation)
+        buttonDown = false
+    }
+
+    func post(displayID: UInt32, x: Double, y: Double, phase: UInt8) {
+        let bounds = CGDisplayBounds(CGDirectDisplayID(displayID))
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let point = CGPoint(x: bounds.minX + min(max(x, 0), 1) * max(bounds.width - 1, 0),
+                            y: bounds.minY + min(max(y, 0), 1) * max(bounds.height - 1, 0))
+        lock.lock(); defer { lock.unlock() }
+        lastLocation = point
+        switch phase {
+        case 0:
+            if buttonDown { postPointerEvent(.leftMouseUp, at: point) }
+            postPointerEvent(.leftMouseDown, at: point)
+            buttonDown = true
+        case 1:
+            postPointerEvent(buttonDown ? .leftMouseDragged : .mouseMoved, at: point)
+        case 2, 3:
+            if buttonDown { postPointerEvent(.leftMouseUp, at: point); buttonDown = false }
+        default: break
+        }
+    }
+}
+
+@_cdecl("wp_input_trusted")
+public func wp_input_trusted() -> Bool { AXIsProcessTrusted() }
+
+@_cdecl("wp_input_release_all")
+public func wp_input_release_all() {
+    PointerState.shared.releaseAll()
+}
+
+@_cdecl("wp_input_pointer")
+public func wp_input_pointer(_ displayID: UInt32, _ x: Double, _ y: Double, _ phase: UInt8) {
+    PointerState.shared.post(displayID: displayID, x: x, y: y, phase: phase)
+}
+
+private func postPointerEvent(_ type: CGEventType, at point: CGPoint) {
+    guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point,
+                              mouseButton: .left) else { return }
+    event.post(tap: .cghidEventTap)
+}
+
 /// UI work is queued on the main thread and never synchronously awaited by the
 /// daemon's async executor. C callers may safely invoke these from worker threads.
 @_cdecl("wp_test_pattern_show")
@@ -56,13 +110,15 @@ public func wp_test_pattern_hide(_ displayID: UInt32) {
 /// is enabled, so AppKit timers and drawing continue without a separate NSApp.run().
 @_cdecl("wp_test_pattern_pump")
 public func wp_test_pattern_pump() {
-    MainActor.assumeIsolated {
-        let app = NSApplication.shared
-        CaptureTestPattern.shared.tick()
-        while let event = app.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) {
-            app.sendEvent(event)
+    DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+            let app = NSApplication.shared
+            CaptureTestPattern.shared.tick()
+            while let event = app.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) {
+                app.sendEvent(event)
+            }
+            app.updateWindows()
         }
-        app.updateWindows()
     }
 }
 

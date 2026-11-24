@@ -4,6 +4,7 @@ import android.os.Build
 import android.content.res.Resources
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.os.SystemClock
 import io.wingpane.proto.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -13,6 +14,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 
 sealed interface ClientState {
     data object Waiting : ClientState
@@ -36,6 +38,7 @@ class WingpaneClient(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val socketFactory: () -> Socket = { Socket() },
     private val nanoTime: () -> Long = System::nanoTime,
+    private val inputTimeUs: () -> Long = { SystemClock.uptimeNanos() / 1_000L },
 ) {
     private val mutableState = MutableStateFlow<ClientState>(ClientState.Waiting)
     val state: StateFlow<ClientState> = mutableState.asStateFlow()
@@ -49,6 +52,28 @@ class WingpaneClient(
     private var job: Job? = null
     @Volatile private var socket: Socket? = null
     private val stopped = AtomicBoolean(false)
+    private val inputSeq = AtomicInteger(0)
+    private val inputQueue = Channel<InputPacket>(Channel.UNLIMITED)
+    private val outputLock = Any()
+
+    init {
+        scope.launch(ioDispatcher) {
+            for (input in inputQueue) {
+                val isCancel = input.event is InputEvent.Touch && input.event.phase == TouchPhase.Cancel
+                if (mutableState.value !is ClientState.Active && !(isCancel && socket != null)) continue
+                val current = socket ?: continue
+                try { synchronized(outputLock) { send(current, Packet.Input(input)) } }
+                catch (_: Throwable) { /* disconnect/reconnect owns socket recovery */ }
+            }
+        }
+    }
+
+    /** Nonblocking for UI callers; packet encoding and socket writes happen on ioDispatcher. */
+    fun sendInput(event: InputEvent) {
+        val isCancel = event is InputEvent.Touch && event.phase == TouchPhase.Cancel
+        if (mutableState.value !is ClientState.Active && !(isCancel && socket != null)) return
+        inputQueue.trySend(InputPacket(inputSeq.getAndIncrement().toUInt(), inputTimeUs().coerceAtLeast(0).toULong(), event))
+    }
 
     fun connect(host: String = "127.0.0.1", port: Int = 7788) {
         if (job?.isActive == true) return
@@ -244,8 +269,10 @@ class WingpaneClient(
 
     private fun send(socket: Socket, packet: Packet) {
         val bytes = packet.encodeFrame()
-        socket.getOutputStream().write(bytes)
-        socket.getOutputStream().flush()
+        synchronized(outputLock) {
+            socket.getOutputStream().write(bytes)
+            socket.getOutputStream().flush()
+        }
     }
 
     private fun emitPacket(packet: Packet) {
