@@ -35,3 +35,12 @@ File này lưu trữ các quyết định kiến trúc quan trọng của dự �
 * **Bối cảnh:** `CGVirtualDisplay` là API riêng của Apple, chỉ gọi được từ Swift/ObjC. Dựng UI Tauri song song với spike pipeline video làm chậm Phase 1.
 * **Quyết định:** Phase 1 host macOS chạy dạng daemon CLI: Rust (`wingpane-core`) lo session/transport, Swift package `apps/desktop/macos-bridge` lo màn hình ảo, ScreenCaptureKit, VideoToolbox, gọi qua C ABI. Tauri 2 (ADR-002) bổ sung sau khi pipeline chạy ổn.
 * **Hệ quả:** Cần lớp FFI Swift↔Rust; UI desktop dời sang sau Phase 1.
+
+---
+
+## [ADR-005] 2026-11-24: Android tự viết codec postcard bằng Kotlin cho MVP
+* **Trạng thái:** Approved (Claude điều phối, chờ anh xem lại)
+* **Bối cảnh:** docs/01 dự kiến dùng `wingpane-core` qua uniffi/JNI trên Android. MVP chỉ cần mã hoá/giải mã `Packet` (docs/02 §4–§5).
+* **Quyết định:** MVP viết codec postcard bằng Kotlin cho đúng tập `Packet` hiện có (varint, enum tag, length-prefix). Tính đúng được khoá bằng **golden vectors** do Rust sinh (`wingpane-proto` xuất file hex, test Kotlin đọc lại).
+* **Lý do:** Bỏ toolchain NDK/uniffi khỏi đường găng MVP; đường giải mã video giữ thuần Kotlin, không phải copy qua JNI.
+* **Rủi ro:** Hai bên schema lệch nhau → chặn bằng golden test bắt buộc trong CI. Xem lại khi cần dùng chung logic nặng (đường cong áp lực, gesture) ở Phase 2.

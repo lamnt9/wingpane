@@ -143,3 +143,19 @@ pub enum GestureKind {
 * **FR-5 — Đồng hồ:** `VideoPacket.pts_us`, `InputPacket.ts_us` = micro-giây đồng hồ monotonic của bên gửi. `Ping/Pong` = nano-giây, bên gửi Ping tự tính RTT.
 * **FR-6 — Bộ giải mã tăng dần:** `FrameDecoder` nhận byte từng mảnh bất kỳ (`push(&[u8])`), trả lần lượt `Packet` hoàn chỉnh; byte rác/thiếu không bao giờ panic, chỉ trả lỗi.
 * **FR-7 — Thứ tự:** Bên gửi giữ thứ tự frame. Video chậm không được chặn Input: host ưu tiên ghi Input/Control trước Video khi hàng đợi gửi có cả hai.
+
+---
+
+## 5. Từ Chối Kết Nối (Reject) — v1, bổ sung 2026-11-24
+
+* **RJ-1:** Thêm biến thể cuối `ControlMessage::Reject(RejectReason)` (đúng FR-4: chỉ thêm ở cuối, không đổi `PROTO_VERSION`).
+  ```rust
+  pub enum RejectReason {
+      VersionMismatch { host_version: u16 }, // tag 0
+      UnsupportedCodec,                       // tag 1 — client không có H.264
+      InvalidHello,                           // tag 2 — kích thước/tần số = 0
+      Busy,                                   // tag 3 — host đang có session khác
+  }
+  ```
+* **RJ-2:** Host nhận `Hello` không hợp lệ → gửi `Reject(..)` rồi đóng kết nối, không im lặng bỏ qua. Client hiện lỗi theo lý do (UI S5).
+* **RJ-3:** `Hello` khi session đang `Active` → `Reject(Busy)`.
