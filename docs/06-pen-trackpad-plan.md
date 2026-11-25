@@ -168,6 +168,7 @@ Ký hiệu file: `proto/` = `crates/wingpane-proto/src/`, `wpd/` = `apps/desktop
 * **Chấp nhận:** Pen mode: băng thông ≈ 0; về Display hình xuất hiện ≤ 300 ms, không xanh/vỡ.
 * **Test:** Rust test cho hàm chọn frame (`should_send(mode, awaiting_key)`); thủ công P11 lặp 20 lần.
 * **Rủi ro:** chạm đúng đường stream → làm **cuối cùng**, chỉ sau khi WP-4 ổn định; nếu hỏng thì revert riêng commit này.
+* **Trạng thái:** Done — host chỉ bỏ frame ngoài Display khi client quảng bá `VIDEO_SUSPEND`; khi trở lại Display yêu cầu keyframe.
 
 ### 3.1 Thứ tự & phụ thuộc
 

@@ -5,7 +5,7 @@ use std::{
     ffi::c_void,
     path::Path,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -166,12 +166,32 @@ const FEATURE_GESTURE: u32 = 1 << 2;
 const FEATURE_KEYBOARD: u32 = 1 << 3;
 const FEATURE_TEXT: u32 = 1 << 4;
 const FEATURE_PEN_CONFIG: u32 = 1 << 5;
+const FEATURE_VIDEO_SUSPEND: u32 = 1 << 7;
 const HOST_INPUT_FEATURES: u32 = FEATURE_PEN_PRESSURE
     | FEATURE_POINTER_RELATIVE
     | FEATURE_GESTURE
     | FEATURE_KEYBOARD
     | FEATURE_TEXT
-    | FEATURE_PEN_CONFIG;
+    | FEATURE_PEN_CONFIG
+    | FEATURE_VIDEO_SUSPEND;
+
+fn should_send_video(mode: Mode, awaiting_key: bool, frame_is_key: bool) -> bool {
+    mode == Mode::ExtendedDisplay && !(awaiting_key && !frame_is_key)
+}
+
+#[cfg(test)]
+mod video_suspend_tests {
+    use super::*;
+
+    #[test]
+    fn video_is_sent_only_in_display_and_waits_for_keyframe() {
+        assert!(should_send_video(Mode::ExtendedDisplay, false, false));
+        assert!(!should_send_video(Mode::ExtendedDisplay, true, false));
+        assert!(should_send_video(Mode::ExtendedDisplay, true, true));
+        assert!(!should_send_video(Mode::GraphicsTablet, false, true));
+        assert!(!should_send_video(Mode::TrackpadKeyboard, false, true));
+    }
+}
 impl InputSink for NativeInputSink {
     fn pointer(&self, x: f32, y: f32, phase: TouchPhase) {
         unsafe { wp_input_pointer(self.0, f64::from(x), f64::from(y), phase as u8) };
@@ -879,6 +899,12 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
     let writer_latency = latency.clone();
     let stats_sent = Arc::new(AtomicU64::new(0));
     let writer_sent = stats_sent.clone();
+    let shared_mode = Arc::new(AtomicU8::new(0));
+    let writer_mode = shared_mode.clone();
+    let client_video_suspend = Arc::new(AtomicBool::new(false));
+    let writer_video_suspend = client_video_suspend.clone();
+    let awaiting_key = Arc::new(AtomicBool::new(false));
+    let writer_awaiting_key = awaiting_key.clone();
     // First tick after 1 s (tokio intervals fire immediately), so the first stats line is a full second.
     let mut stats_tick = tokio::time::interval_at(
         tokio::time::Instant::now() + Duration::from_secs(1),
@@ -893,10 +919,23 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
             tokio::select! { biased;
                 Some(p) = control_rx.recv() => if writer.send(&p).await.is_err() { break; },
                 frame = queue.pop() => {
+                    let mode = match writer_mode.load(Ordering::Acquire) {
+                        1 => Mode::GraphicsTablet,
+                        2 => Mode::TrackpadKeyboard,
+                        _ => Mode::ExtendedDisplay,
+                    };
+                    let suspend = writer_video_suspend.load(Ordering::Acquire);
+                    let waiting_for_key = writer_awaiting_key.load(Ordering::Acquire);
+                    if suspend && !should_send_video(mode, waiting_for_key, frame.keyframe) {
+                        continue;
+                    }
                     let p = Packet::Video(VideoPacket { frame_seq: seq, pts_us: frame.pts_us, is_keyframe: frame.keyframe, payload: frame.data }); seq = seq.wrapping_add(1);
                     let frame_bytes = match &p { Packet::Video(video) => video.payload.len(), _ => 0 };
                     let encode_done_us = frame.encode_done_us;
                     if writer.send(&p).await.is_err() { break; }
+                    if suspend && frame.keyframe {
+                        writer_awaiting_key.store(false, Ordering::Release);
+                    }
                     writer_latency.written(ffi::host_time_us().saturating_sub(encode_done_us), frame_bytes, frame.keyframe);
                     writer_sent.fetch_add(1, Ordering::Relaxed);
                 }
@@ -960,7 +999,23 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
             Ok(Some(Packet::Control(message))) => {
                 let message = match message {
                     ControlMessage::SetMode(next_mode) => {
+                        let previous_mode = input_router.mode();
                         input_router.set_mode(next_mode);
+                        if next_mode == Mode::ExtendedDisplay && previous_mode != Mode::ExtendedDisplay {
+                            if client_video_suspend.load(Ordering::Acquire) {
+                                awaiting_key.store(true, Ordering::Release);
+                                let handle = unsafe { &*(context_addr as *const CallbackContext) }
+                                    .handle.load(Ordering::Relaxed);
+                                if handle != 0 {
+                                    unsafe { request_keyframe(handle) };
+                                }
+                            }
+                        }
+                        shared_mode.store(match next_mode {
+                            Mode::ExtendedDisplay => 0,
+                            Mode::GraphicsTablet => 1,
+                            Mode::TrackpadKeyboard => 2,
+                        }, Ordering::Release);
                         if status_json {
                             emit_status(StatusEvent::Mode { mode: next_mode });
                         }
@@ -973,8 +1028,9 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                         input_router.set_pen_config(pressure_curve, target);
                         continue;
                     }
-                    ControlMessage::Capabilities { .. } => {
+                    ControlMessage::Capabilities { features } => {
                         client_capabilities_seen = true;
+                        client_video_suspend.store(features & FEATURE_VIDEO_SUSPEND != 0, Ordering::Release);
                         ControlMessage::Capabilities {
                             features: HOST_INPUT_FEATURES | if input_trusted { 1 << 6 } else { 0 },
                         }
