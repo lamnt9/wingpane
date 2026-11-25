@@ -87,6 +87,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.wingpane.R
+import io.wingpane.input.PalmRejectionFilter
 import io.wingpane.ui.screen.WingpaneSecondaryButton
 import io.wingpane.ui.state.ClientStateMapper
 import io.wingpane.ui.state.DisconnectConfirmStateMachine
@@ -130,6 +131,8 @@ fun StreamHudOverlay(
     onLockAspectRatioChange: (Boolean) -> Unit,
     showTouches: Boolean,
     onShowTouchesChange: (Boolean) -> Unit,
+    palmRejectionLevel: PalmRejectionFilter.Level,
+    onPalmRejectionLevelChange: (PalmRejectionFilter.Level) -> Unit,
     activeStreamTouch: StreamTouchPoint?,
     externalOpenRequestTick: Int,
     onDisconnect: () -> Unit,
@@ -324,6 +327,8 @@ fun StreamHudOverlay(
                         onLockAspectRatioChange(it)
                     },
                     showTouches = showTouches,
+                    palmRejectionLevel = palmRejectionLevel,
+                    onPalmRejectionLevelChange = onPalmRejectionLevelChange,
                     onShowTouchesChange = {
                         performWingpaneHaptic(context, view)
                         panelInteractionTick++
@@ -508,6 +513,8 @@ private fun ExpandedHudPanel(
     onLockAspectRatioChange: (Boolean) -> Unit,
     showTouches: Boolean,
     onShowTouchesChange: (Boolean) -> Unit,
+    palmRejectionLevel: PalmRejectionFilter.Level,
+    onPalmRejectionLevelChange: (PalmRejectionFilter.Level) -> Unit,
     isTalkBackEnabled: Boolean,
     onPanelInteraction: () -> Unit,
     onClose: () -> Unit,
@@ -800,6 +807,26 @@ private fun ExpandedHudPanel(
                 checked = lockAspectRatio,
                 onCheckedChange = onLockAspectRatioChange,
             )
+
+            val levels = PalmRejectionFilter.Level.entries
+            val nextPalm = levels[(levels.indexOf(palmRejectionLevel) + 1) % levels.size]
+            Box(
+                modifier = Modifier.fillMaxWidth().heightIn(min = touch.minTarget)
+                    .clip(RoundedCornerShape(radius.card)).background(colors.surface2)
+                    .clickable(role = Role.Button) { onPanelInteraction(); onPalmRejectionLevelChange(nextPalm) }
+                    .padding(horizontal = spacing.md, vertical = spacing.sm),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    text = stringResource(R.string.hud_palm_rejection, stringResource(when (palmRejectionLevel) {
+                        PalmRejectionFilter.Level.Off -> R.string.hud_palm_off
+                        PalmRejectionFilter.Level.Standard -> R.string.hud_palm_standard
+                        PalmRejectionFilter.Level.Strict -> R.string.hud_palm_strict
+                    })),
+                    color = colors.text,
+                    style = WingpaneTheme.typography.body,
+                )
+            }
 
             // 4. Toggle: Show touches
             HudToggleRow(

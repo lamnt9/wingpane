@@ -155,10 +155,13 @@ impl<'a> InputRouter<'a> {
                 is_hover,
                 button_mask,
                 ..
-            } => self.sink.pen(PenSample {
+            } if self.mode == Mode::ExtendedDisplay => self.sink.pen(PenSample {
                 x,
                 y,
-                pressure,
+                pressure: wingpane_core::pen::apply_pressure_curve(
+                    pressure,
+                    &[0.25, 0.25, 0.75, 0.75],
+                ),
                 tilt_x,
                 tilt_y,
                 is_down,
@@ -214,7 +217,7 @@ pub fn handle_input(sink: &dyn InputSink, packet: wingpane_proto::InputPacket) -
         } => sink.pen(PenSample {
             x,
             y,
-            pressure,
+            pressure: wingpane_core::pen::apply_pressure_curve(pressure, &[0.25, 0.25, 0.75, 0.75]),
             tilt_x,
             tilt_y,
             is_down,
@@ -502,6 +505,87 @@ mod tests {
             *sink.0.lock().unwrap(),
             ["pointer", "release", "mode", "relative"]
         );
+    }
+
+    #[test]
+    fn display_router_curves_pen_pressure_and_preserves_sample_fields() {
+        struct Recording(Mutex<Vec<PenSample>>);
+        impl InputSink for Recording {
+            fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {}
+            fn release_all(&self) {}
+            fn pen(&self, sample: PenSample) {
+                self.0.lock().unwrap().push(sample);
+            }
+        }
+        let mut sink = Recording(Mutex::new(Vec::new()));
+        let router = InputRouter::new(wingpane_proto::Mode::ExtendedDisplay, &mut sink);
+        assert!(router.handle_input(wingpane_proto::InputPacket {
+            seq: 1,
+            ts_us: 1,
+            event: wingpane_proto::InputEvent::Pen {
+                x: 0.2,
+                y: 0.8,
+                pressure: 0.5,
+                tilt_x: -30,
+                tilt_y: 40,
+                is_down: true,
+                is_hover: false,
+                button_mask: 3,
+                timestamp_us: 1,
+            }
+        }));
+        drop(router);
+        let got = sink.0.lock().unwrap()[0];
+        assert_eq!(
+            (
+                got.x,
+                got.y,
+                got.tilt_x,
+                got.tilt_y,
+                got.is_down,
+                got.is_hover,
+                got.button_mask
+            ),
+            (0.2, 0.8, -30, 40, true, false, 3)
+        );
+        assert!((got.pressure - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn display_router_sanitizes_nan_pen_pressure_and_ignores_pen_in_other_modes() {
+        struct Recording(Mutex<Vec<PenSample>>);
+        impl InputSink for Recording {
+            fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {}
+            fn release_all(&self) {}
+            fn pen(&self, sample: PenSample) {
+                self.0.lock().unwrap().push(sample);
+            }
+        }
+        let mut sink = Recording(Mutex::new(Vec::new()));
+        let packet = wingpane_proto::InputPacket {
+            seq: 1,
+            ts_us: 1,
+            event: wingpane_proto::InputEvent::Pen {
+                x: 0.5,
+                y: 0.5,
+                pressure: f32::NAN,
+                tilt_x: 0,
+                tilt_y: 0,
+                is_down: false,
+                is_hover: true,
+                button_mask: 0,
+                timestamp_us: 1,
+            },
+        };
+        let router = InputRouter::new(wingpane_proto::Mode::ExtendedDisplay, &mut sink);
+        assert!(router.handle_input(packet.clone()));
+        drop(router);
+        assert_eq!(sink.0.lock().unwrap()[0].pressure, 0.0);
+        let mut sink2 = Recording(Mutex::new(Vec::new()));
+        let router2 = InputRouter::new(wingpane_proto::Mode::TrackpadKeyboard, &mut sink2);
+        assert!(!router2.handle_input(packet));
+        drop(router2);
+        assert!(sink2.0.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -76,6 +76,10 @@
     <string name="hud_lock_aspect_ratio_desc">Maintain 16:10 native proportion</string>
     <string name="hud_show_touches">Show touches</string>
     <string name="hud_show_touches_desc">Render visual feedback circles</string>
+    <string name="hud_palm_rejection">Palm rejection: %1$s (tap to change)</string>
+    <string name="hud_palm_off">Off</string>
+    <string name="hud_palm_standard">Standard</string>
+    <string name="hud_palm_strict">Strict</string>
     <string name="hud_disconnect">Disconnect</string>
     <string name="hud_disconnect_confirm">Tap again to disconnect</string>
     <string name="reconnecting_title">Reconnecting…</string>

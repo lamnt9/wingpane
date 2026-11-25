@@ -25,9 +25,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import io.wingpane.input.TouchMapper
+import io.wingpane.input.StylusMapper
+import io.wingpane.input.PalmRejectionFilter
 import io.wingpane.net.ClientState
 import io.wingpane.net.WingpaneClient
 import io.wingpane.proto.ControlMessage
+import io.wingpane.proto.InputEvent
 import io.wingpane.proto.Packet
 import io.wingpane.ui.hud.StreamHudOverlay
 import io.wingpane.ui.hud.StreamTouchPoint
@@ -45,6 +48,11 @@ class MainActivity : ComponentActivity() {
     private var lastBitrateKbps by mutableStateOf(0u)
     private var videoAspectRatio by mutableStateOf<Float?>(null)
     private var touchMapper: TouchMapper? = null
+    private var touchMapperWidth: Int? = null
+    private var touchMapperHeight: Int = 0
+    private val palmFilter = PalmRejectionFilter()
+    private var lastStylusSample: InputEvent.Pen? = null
+    private fun hostSupportsPen() = client.hostCapabilitiesReceived.value && (client.hostFeatures.value and 1) != 0
 
     private var activeStreamTouch by mutableStateOf<StreamTouchPoint?>(null)
     private var threeFingerTapHud by mutableStateOf(false)
@@ -52,6 +60,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val storedPalm = getSharedPreferences("input", MODE_PRIVATE).getString("palm_rejection", "Standard")
+        palmFilter.setLevel(runCatching { PalmRejectionFilter.Level.valueOf(storedPalm ?: "Standard") }.getOrDefault(PalmRejectionFilter.Level.Standard))
         applyImmersiveSticky()
         decoder = VideoDecoder({ lifecycleScope.launch { client.sendControl(ControlMessage.RequestKeyframe) } }) { stats = it }
         client = WingpaneClient()
@@ -73,6 +83,8 @@ class MainActivity : ComponentActivity() {
                             videoAspectRatio = w.toFloat() / h.toFloat()
                         }
                         touchMapper = TouchMapper(w, h)
+                        touchMapperWidth = w
+                        touchMapperHeight = h
                         decoder.configure(w, h)
                     }
                 }
@@ -94,6 +106,7 @@ class MainActivity : ComponentActivity() {
                 var keepHudVisible by rememberSaveable { mutableStateOf(false) }
                 var lockAspectRatio by rememberSaveable { mutableStateOf(true) }
                 var showTouches by rememberSaveable { mutableStateOf(false) }
+                var palmLevel by rememberSaveable { mutableStateOf(palmFilter.currentLevel().name) }
 
                 // Brief: Stream forces sensorLandscape; connection screens support both tablet landscape & phone portrait.
                 LaunchedEffect(uiModel.isStreamScreen) {
@@ -138,6 +151,13 @@ class MainActivity : ComponentActivity() {
                                     }
                                 })
                                 setOnTouchListener { view, event -> handleTouch(view, event) }
+                                setOnGenericMotionListener { view, event ->
+                                    when (event.actionMasked) {
+                                        MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT ->
+                                            if (hostSupportsPen()) handleStylus(view, event, hover = true) else false
+                                        else -> false
+                                    }
+                                }
                             }
                         },
                         modifier = surfaceModifier,
@@ -154,6 +174,12 @@ class MainActivity : ComponentActivity() {
                             onLockAspectRatioChange = { lockAspectRatio = it },
                             showTouches = showTouches,
                             onShowTouchesChange = { showTouches = it },
+                            palmRejectionLevel = PalmRejectionFilter.Level.valueOf(palmLevel),
+                            onPalmRejectionLevelChange = { level ->
+                                palmLevel = level.name
+                                palmFilter.setLevel(level)
+                                getSharedPreferences("input", MODE_PRIVATE).edit().putString("palm_rejection", level.name).apply()
+                            },
                             activeStreamTouch = activeStreamTouch,
                             externalOpenRequestTick = hudOpenRequestTick,
                             onDisconnect = {
@@ -225,6 +251,28 @@ class MainActivity : ComponentActivity() {
         }
 
         val mapper = touchMapper ?: return false
+        val stylusIndex = (0 until event.pointerCount).firstOrNull {
+            event.getToolType(it) == MotionEvent.TOOL_TYPE_STYLUS || event.getToolType(it) == MotionEvent.TOOL_TYPE_ERASER
+        }
+        if (stylusIndex != null && hostSupportsPen()) {
+            mapper.cancel().forEach(client::sendInput)
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) view.requestUnbufferedDispatch(event)
+            return handleStylus(view, event, hover = false, pointerIndex = stylusIndex)
+        }
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) palmFilter.newTouchContact()
+        val nowNs = event.eventTime * 1_000_000L
+        val samples = (0 until event.pointerCount).map { index ->
+            val tool = when (event.getToolType(index)) {
+                MotionEvent.TOOL_TYPE_FINGER -> PalmRejectionFilter.Tool.Finger
+                TOOL_TYPE_PALM -> PalmRejectionFilter.Tool.Palm // MotionEvent.TOOL_TYPE_PALM (API 34); literal keeps minSdk 29
+                else -> PalmRejectionFilter.Tool.Other
+            }
+            PalmRejectionFilter.PointerSample(event.getPointerId(index), tool, event.getX(index), event.getY(index),
+                event.getTouchMajor(index), android.os.Build.VERSION.SDK_INT >= 33 && event.flags and MotionEvent.FLAG_CANCELED != 0, nowNs)
+        }
+        val filtered = palmFilter.filter(samples, nowNs, view.width.toFloat(), view.height.toFloat(), resources.displayMetrics.density,
+            resources.displayMetrics.xdpi / 25.4f, mapper.activePointerId())
+        if (filtered.cancelActiveTouch) mapper.cancel().forEach(client::sendInput)
         val action = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> TouchMapper.Action.Down
             MotionEvent.ACTION_MOVE -> TouchMapper.Action.Move
@@ -243,7 +291,11 @@ class MainActivity : ComponentActivity() {
             TouchMapper.Action.Cancel -> 0
             else -> pointerId?.let(event::findPointerIndex)?.takeIf { it >= 0 } ?: return true
         }
-        val historical = if (action == TouchMapper.Action.Move) {
+        if (filtered.accepted.none { it.id == event.getPointerId(pointerIndex) }) {
+            mapper.cancel().forEach(client::sendInput)
+            return true
+        }
+        val historical = if (action == TouchMapper.Action.Move && filtered.accepted.any { it.id == event.getPointerId(pointerIndex) }) {
             val points = ArrayList<TouchMapper.Point>(event.historySize)
             for (index in 0 until event.historySize) {
                 points += TouchMapper.Point(event.getHistoricalX(pointerIndex, index), event.getHistoricalY(pointerIndex, index))
@@ -256,12 +308,64 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
+    private fun handleStylus(view: View, event: MotionEvent, hover: Boolean, pointerIndex: Int = event.actionIndex.coerceIn(0, event.pointerCount - 1)): Boolean {
+        if (event.pointerCount == 0) return false
+        val tool = event.getToolType(pointerIndex)
+        if (tool != MotionEvent.TOOL_TYPE_STYLUS && tool != MotionEvent.TOOL_TYPE_ERASER) return false
+        val action = when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> StylusMapper.Action.Down
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> StylusMapper.Action.Up
+            MotionEvent.ACTION_CANCEL -> StylusMapper.Action.Cancel
+            MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE -> StylusMapper.Action.Hover
+            MotionEvent.ACTION_HOVER_EXIT -> StylusMapper.Action.Exit
+            else -> if (hover) StylusMapper.Action.Hover else StylusMapper.Action.Move
+        }
+        val inRange = action != StylusMapper.Action.Exit && action != StylusMapper.Action.Cancel
+        val timeNs = event.eventTime * 1_000_000L
+        palmFilter.noteStylus(inRange, timeNs)
+        val videoWidth = touchMapperWidth ?: return false
+        val videoHeight = touchMapperHeight
+        if (action == StylusMapper.Action.Move) {
+            for (historyIndex in 0 until event.historySize) {
+                val historical = StylusMapper.Sample(
+                    event.getHistoricalX(pointerIndex, historyIndex), event.getHistoricalY(pointerIndex, historyIndex),
+                    event.getHistoricalPressure(pointerIndex, historyIndex), event.getHistoricalAxisValue(MotionEvent.AXIS_TILT, pointerIndex, historyIndex),
+                    event.getHistoricalAxisValue(MotionEvent.AXIS_ORIENTATION, pointerIndex, historyIndex), event.buttonState, action, false,
+                    event.getHistoricalEventTime(historyIndex) * 1_000_000L, tool == MotionEvent.TOOL_TYPE_ERASER)
+                StylusMapper.map(historical, videoWidth, videoHeight, view.width, view.height)?.let(::sendPen)
+            }
+        }
+        val sample = StylusMapper.Sample(event.getX(pointerIndex), event.getY(pointerIndex), event.getPressure(pointerIndex),
+            event.getAxisValue(MotionEvent.AXIS_TILT, pointerIndex), event.getAxisValue(MotionEvent.AXIS_ORIENTATION, pointerIndex),
+            event.buttonState, action, hover || action == StylusMapper.Action.Up || action == StylusMapper.Action.Hover,
+            timeNs, tool == MotionEvent.TOOL_TYPE_ERASER)
+        StylusMapper.map(sample, videoWidth, videoHeight, view.width, view.height)?.let(::sendPen)
+        return true
+    }
+
+    private fun sendPen(sample: InputEvent.Pen) {
+        client.sendInput(sample)
+        lastStylusSample = if (sample.isDown || sample.isHover) sample else null
+    }
+
+    private fun cancelStylus() {
+        lastStylusSample?.copy(
+            pressure = 0f, isDown = false, isHover = false, buttonMask = 0u.toUByte(),
+            timestampUs = (SystemClock.elapsedRealtimeNanos() / 1_000).toULong(),
+        )?.let(client::sendInput)
+        lastStylusSample = null
+        palmFilter.noteStylus(false, SystemClock.elapsedRealtimeNanos())
+    }
+
     private fun cancelTouch() {
         activeStreamTouch = null
         touchMapper?.cancel()?.forEach(client::sendInput)
+        cancelStylus()
     }
 
     override fun onPause() { cancelTouch(); super.onPause() }
     override fun onStop() { cancelTouch(); super.onStop() }
     override fun onDestroy() { cancelTouch(); client.cancel(); decoder.close(); super.onDestroy() }
 }
+
+private const val TOOL_TYPE_PALM = 5

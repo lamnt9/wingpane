@@ -58,11 +58,19 @@ public func wp_host_time_us() -> UInt64 {
 @_cdecl("wp_input_release_all")
 public func wp_input_release_all() {
     PointerState.shared.releaseAll()
+    PenState.shared.releaseAll()
 }
 
 @_cdecl("wp_input_pointer")
 public func wp_input_pointer(_ displayID: UInt32, _ x: Double, _ y: Double, _ phase: UInt8) {
     PointerState.shared.post(displayID: displayID, x: x, y: y, phase: phase)
+}
+
+@_cdecl("wp_input_pen")
+public func wp_input_pen(_ displayID: UInt32, _ x: Double, _ y: Double, _ pressure: Double,
+                         _ tiltX: Double, _ tiltY: Double, _ buttons: UInt8, _ flags: UInt8) {
+    PenState.shared.post(displayID: displayID, x: x, y: y, pressure: pressure,
+                         tiltX: tiltX, tiltY: tiltY, buttons: buttons, flags: flags)
 }
 
 /// UI work is queued on the main thread and never synchronously awaited by the
