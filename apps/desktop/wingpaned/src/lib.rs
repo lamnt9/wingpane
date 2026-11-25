@@ -9,6 +9,7 @@ use std::{
 use tokio::sync::Notify;
 
 pub mod keymap_macos;
+pub mod uc;
 
 #[derive(Debug, Clone)]
 pub struct EncodedFrame {
@@ -265,13 +266,19 @@ fn key_tap(sink: &dyn InputSink, hid: u16, modifiers: u8) {
     sink.key(hid, false, 0);
 }
 
+pub trait UcResource: Send {
+    fn release(&self);
+}
+
 pub struct SessionResources {
+    pub uc: Box<dyn UcResource>,
     pub capture: Box<dyn CaptureSource>,
     pub input: Box<dyn InputSink>,
     pub display: Box<dyn DisplayResource>,
 }
 impl Drop for SessionResources {
     fn drop(&mut self) {
+        self.uc.release();
         self.input.release_all();
         self.capture.stop();
         self.display.destroy();
@@ -516,8 +523,13 @@ mod tests {
                 self.0.lock().unwrap().push("destroy");
             }
         }
+        struct OrderedUc(Arc<Mutex<Vec<&'static str>>>);
+        impl UcResource for OrderedUc {
+            fn release(&self) { self.0.lock().unwrap().push("uc_release"); }
+        }
         let calls = Arc::new(Mutex::new(Vec::new()));
         let resources = SessionResources {
+            uc: Box::new(OrderedUc(calls.clone())),
             capture: Box::new(OrderedCapture(calls.clone())),
             input: Box::new(OrderedInput(calls.clone())),
             display: Box::new(OrderedDisplay(calls.clone())),
@@ -535,10 +547,11 @@ mod tests {
                 },
             },
         ));
-        drop(resources); // EOF/error/task cancellation all release before display destruction.
+        calls.lock().unwrap().clear();
+        drop(resources); // EOF/error/task cancellation release UC first.
         assert_eq!(
             *calls.lock().unwrap(),
-            ["pointer", "release", "stop", "destroy"]
+            ["uc_release", "release", "stop", "destroy"]
         );
     }
 
@@ -871,11 +884,87 @@ mod tests {
         drop(client);
         assert!(framed.recv().await.unwrap().is_none());
         let calls = Arc::new(AtomicUsize::new(0));
+        struct NoopUc;
+        impl UcResource for NoopUc { fn release(&self) {} }
         drop(SessionResources {
+            uc: Box::new(NoopUc),
             capture: Box::new(Fake(calls.clone())),
             input: Box::new(NoopInput),
             display: Box::new(Fake(calls.clone())),
         });
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+}
+
+// Pure display policy and original regression tests (WP-U5 extraction).
+use wingpane_proto::Mode;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DisplayTransition {
+    None,
+    Remove,
+    Create,
+}
+
+/// Display + Trackpad keep the virtual display (Trackpad shows it above the pad); only Pen removes it.
+pub fn mode_has_display(mode: Mode) -> bool {
+    !matches!(mode, Mode::GraphicsTablet | Mode::AndroidControl)
+}
+
+pub fn display_transition(prev: Mode, next: Mode, suspend_supported: bool) -> DisplayTransition {
+    if !suspend_supported {
+        return DisplayTransition::None;
+    }
+    match (mode_has_display(prev), mode_has_display(next)) {
+        (true, false) => DisplayTransition::Remove,
+        (false, true) => DisplayTransition::Create,
+        _ => DisplayTransition::None,
+    }
+}
+
+
+pub fn should_send_video(mode: Mode, awaiting_key: bool, frame_is_key: bool) -> bool {
+    mode_has_display(mode) && !(awaiting_key && !frame_is_key)
+}
+
+#[cfg(test)]
+mod display_transition_tests {
+    use super::*;
+    #[test]
+    fn transition_requires_negotiated_suspend_and_crossing_display_boundary() {
+        assert!(!mode_has_display(Mode::AndroidControl));
+        assert_eq!(
+            display_transition(Mode::ExtendedDisplay, Mode::GraphicsTablet, true),
+            DisplayTransition::Remove
+        );
+        assert_eq!(
+            display_transition(Mode::GraphicsTablet, Mode::TrackpadKeyboard, true),
+            DisplayTransition::Create
+        );
+        assert_eq!(display_transition(Mode::TrackpadKeyboard, Mode::AndroidControl, true), DisplayTransition::Remove);
+        assert_eq!(display_transition(Mode::GraphicsTablet, Mode::AndroidControl, true), DisplayTransition::None);
+        assert_eq!(display_transition(Mode::AndroidControl, Mode::ExtendedDisplay, true), DisplayTransition::Create);
+        assert_eq!(
+            display_transition(Mode::ExtendedDisplay, Mode::TrackpadKeyboard, true),
+            DisplayTransition::None
+        );
+        assert_eq!(
+            display_transition(Mode::ExtendedDisplay, Mode::GraphicsTablet, false),
+            DisplayTransition::None
+        );
+    }
+}
+
+#[cfg(test)]
+mod video_suspend_tests {
+    use super::*;
+
+    #[test]
+    fn video_is_sent_only_in_display_and_waits_for_keyframe() {
+        assert!(should_send_video(Mode::ExtendedDisplay, false, false));
+        assert!(!should_send_video(Mode::ExtendedDisplay, true, false));
+        assert!(should_send_video(Mode::ExtendedDisplay, true, true));
+        assert!(!should_send_video(Mode::GraphicsTablet, false, true));
+        assert!(!should_send_video(Mode::AndroidControl, false, true));
+        assert!(should_send_video(Mode::TrackpadKeyboard, false, true));
     }
 }
