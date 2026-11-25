@@ -3,9 +3,12 @@ package io.wingpane.net
 import io.wingpane.proto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.ServerSocket
@@ -21,6 +24,30 @@ class WingpaneClientTest {
     ))
 
     private fun server(handler: (Socket, Int) -> Unit): FakeServer = FakeServer(handler)
+
+    @Test fun detachedVideoSinkDrainsQueuedPacketsAndDropsNewOnesWithoutSocket() = runTest {
+        val client = WingpaneClient(
+            scope = backgroundScope,
+            ioDispatcher = coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
+        )
+        val emit = WingpaneClient::class.java.getDeclaredMethod("emitPacket", Packet::class.java)
+            .apply { isAccessible = true }
+        fun video(seq: UInt) = Packet.Video(VideoPacket(seq, seq.toULong(), true, byteArrayOf(1)))
+
+        assertTrue(client.videoSinkAttached)
+        emit.invoke(client, video(1u))
+        emit.invoke(client, video(2u))
+        client.videoSinkAttached = false
+        emit.invoke(client, video(3u))
+        client.videoSinkAttached = true
+
+        val received = async { withTimeout(1_000) { client.packets.first() } }
+        runCurrent()
+        emit.invoke(client, video(4u))
+        runCurrent()
+        assertEquals(4u, (received.await() as Packet.Video).packet.frameSeq)
+        client.cancel()
+    }
 
     @Test fun reducerKeepsOneLossEpisodeAcrossFailedTcpAttempts() {
         var m = ConnectionStateMachine.Model(ClientState.Active(accept.message as ControlMessage.Accept), true)

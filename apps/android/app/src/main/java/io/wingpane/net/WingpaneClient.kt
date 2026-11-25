@@ -118,13 +118,21 @@ class WingpaneClient(
     @Volatile var onClockSync: ((ClockOffsetEstimator.Estimate) -> Unit)? = null
     private val mutableState = MutableStateFlow<ClientState>(ClientState.Waiting)
     val state: StateFlow<ClientState> = mutableState.asStateFlow()
+    fun isActive(): Boolean = state.value is ClientState.Active
     private val mutableHostFeatures = MutableStateFlow(0)
     val hostFeatures: StateFlow<Int> = mutableHostFeatures.asStateFlow()
     private val mutableHostCapabilitiesReceived = MutableStateFlow(false)
     val hostCapabilitiesReceived: StateFlow<Boolean> = mutableHostCapabilitiesReceived.asStateFlow()
-    // Never conflate/drop here: H.264 P-frames depend on predecessors. Backlog is handled by
-    // VideoDecoder (drop until next IDR + RequestKeyframe).
+    // While attached, never conflate/drop: H.264 P-frames depend on predecessors. Backlog is
+    // handled by VideoDecoder (drop until next IDR + RequestKeyframe).
     private val videoIncoming = Channel<Packet>(Channel.UNLIMITED)
+    @Volatile var videoSinkAttached: Boolean = true
+        set(value) {
+            synchronized(videoIncoming) {
+                field = value
+                if (!value) while (videoIncoming.tryReceive().isSuccess) { /* discard stale video */ }
+            }
+        }
     private val otherIncoming = Channel<Packet>(Channel.UNLIMITED)
     /** Only video and input packets are emitted; control messages are consumed by the client. */
     val packets: Flow<Packet> = merge(videoIncoming.receiveAsFlow(), otherIncoming.receiveAsFlow())
@@ -381,10 +389,15 @@ class WingpaneClient(
 
     private fun emitPacket(packet: Packet) {
         if (packet is Packet.Video) {
-            videoReceivedAtNs[packet.packet.ptsUs.toLong()] = System.nanoTime()
-            if (videoReceivedAtNs.size > 240) videoReceivedAtNs.keys.firstOrNull()?.let(videoReceivedAtNs::remove)
+            synchronized(videoIncoming) {
+                if (!videoSinkAttached) return
+                videoReceivedAtNs[packet.packet.ptsUs.toLong()] = System.nanoTime()
+                if (videoReceivedAtNs.size > 240) videoReceivedAtNs.keys.firstOrNull()?.let(videoReceivedAtNs::remove)
+                videoIncoming.trySend(packet)
+            }
+        } else {
+            otherIncoming.trySend(packet)
         }
-        if (packet is Packet.Video) videoIncoming.trySend(packet) else otherIncoming.trySend(packet)
     }
 
     private companion object {
