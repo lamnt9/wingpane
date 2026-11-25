@@ -2,7 +2,6 @@ package io.wingpane.uc
 
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.view.ViewConfiguration
 
 /** Maps planner output to single-finger AccessibilityService gestures. */
 class GestureAdapter(private val queue: GestureQueue) {
@@ -10,7 +9,7 @@ class GestureAdapter(private val queue: GestureQueue) {
     fun submit(plan: GesturePlan) {
         when (plan) {
             is GesturePlan.Tap -> dispatch(path(plan.x,plan.y,plan.x,plan.y), plan.durMs)
-            is GesturePlan.LongPress -> dispatch(path(plan.x,plan.y,plan.x,plan.y), maxOf(plan.durMs, ViewConfiguration.getLongPressTimeout()+100L))
+            is GesturePlan.LongPress -> dispatch(path(plan.x,plan.y,plan.x,plan.y), plan.durMs)
             is GesturePlan.StrokeStart -> {
                 val p = path(plan.from.x,plan.from.y,plan.to.x,plan.to.y)
                 val stroke = GestureDescription.StrokeDescription(p,0,plan.durMs,plan.willContinue); strokes[plan.id] = stroke; queue.enqueue(GestureDescription.Builder().addStroke(stroke).build())

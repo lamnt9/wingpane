@@ -7,6 +7,9 @@ import android.accessibilityservice.InputMethod
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Path
+import android.os.Handler
+import android.os.Looper
+import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.view.accessibility.AccessibilityEvent
 import java.lang.ref.WeakReference
@@ -36,7 +39,7 @@ class WingpaneAccessibilityService : AccessibilityService() {
     interface UcInjector {
         fun move(dx: Float, dy: Float, nowMs: Long = android.os.SystemClock.uptimeMillis())
         fun button(button: Int, down: Boolean, nowMs: Long = android.os.SystemClock.uptimeMillis())
-        fun scroll(dx: Float, dy: Float, phase: CursorEvent.Phase, nowMs: Long = android.os.SystemClock.uptimeMillis())
+        fun scroll(dx: Float, dy: Float, phase: CursorEvent.Phase, invert: Boolean = false, nowMs: Long = android.os.SystemClock.uptimeMillis())
         fun global(action: Int): Boolean
         fun text(value: String)
         fun cursor(): CursorModel.Position
@@ -46,7 +49,13 @@ class WingpaneAccessibilityService : AccessibilityService() {
     private var queue: GestureQueue? = null
     private var controller: UcController? = null
     private lateinit var adapter: GestureAdapter
-    private val planner = PointerGesturePlanner()
+    private lateinit var planner: PointerGesturePlanner
+    private lateinit var scrollPlanner: ScrollPlanner
+    private val scrollHandler = Handler(Looper.getMainLooper())
+    private val flushWheel = Runnable {
+        scrollPlanner.flushWheel(cursorModel?.position() ?: return@Runnable, android.os.SystemClock.uptimeMillis())
+            .forEach(adapter::submit)
+    }
     private var buttonsDown = false
     private val injector = object : UcInjector {
         override fun move(dx: Float,dy: Float,nowMs:Long) {
@@ -63,9 +72,14 @@ class WingpaneAccessibilityService : AccessibilityService() {
             buttonsDown=down
             planner.onEvent(CursorEvent.Button(button,down,p.x,p.y,nowMs)).forEach(adapter::submit)
         }
-        override fun scroll(dx:Float,dy:Float,phase:CursorEvent.Phase,nowMs:Long) {
+        override fun scroll(dx:Float,dy:Float,phase:CursorEvent.Phase,invert:Boolean,nowMs:Long) {
             val density = resources.displayMetrics.density
-            planner.onEvent(CursorEvent.Scroll(dx*density,dy*density,phase,nowMs)).forEach(adapter::submit)
+            val cursor = cursorModel?.position() ?: return
+            scrollPlanner.onScroll(CursorEvent.Scroll(dx*density,dy*density,phase,nowMs), cursor, invert).forEach(adapter::submit)
+            if (phase == CursorEvent.Phase.Discrete) {
+                scrollHandler.removeCallbacks(flushWheel)
+                scrollHandler.postDelayed(flushWheel,41)
+            }
         }
         override fun global(action:Int)=performGlobalAction(action)
         override fun text(value:String) {
@@ -84,6 +98,8 @@ class WingpaneAccessibilityService : AccessibilityService() {
             notificationTimeout=0
         }
         val dm=resources.displayMetrics
+        planner=PointerGesturePlanner(ViewConfiguration.getLongPressTimeout()+100L,6f*dm.density)
+        scrollPlanner=ScrollPlanner(ViewConfiguration.get(this).scaledTouchSlop.toFloat())
         cursorModel=CursorModel(dm.widthPixels,dm.heightPixels)
         queue=GestureQueue({ gesture,callback -> dispatchGesture(gesture,callback,null) })
         adapter=GestureAdapter(queue!!)
@@ -109,7 +125,12 @@ class WingpaneAccessibilityService : AccessibilityService() {
     }
     fun exitUc() { cancelUcGestures(); overlay?.hide(); setRemoteKeyboardActive(false) }
     // Drop pending moves, then submit the StrokeEnd from cancelAll() so a drag in progress lifts its finger.
-    private fun cancelUcGestures() { queue?.clear(); planner.cancelAll().forEach(adapter::submit) }
+    private fun cancelUcGestures() {
+        scrollHandler.removeCallbacks(flushWheel)
+        queue?.clear()
+        if (::scrollPlanner.isInitialized && ::adapter.isInitialized) scrollPlanner.cancel().forEach(adapter::submit)
+        if (::planner.isInitialized && ::adapter.isInitialized) planner.cancelAll().forEach(adapter::submit)
+    }
     fun cursorAlong(): Float = cursorModel?.along() ?: 0.5f
     fun returnMouse() { controller?.returnMouse() }
     fun overlayShown(): Boolean = controller?.inside == true

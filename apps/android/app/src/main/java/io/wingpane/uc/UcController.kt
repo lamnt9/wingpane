@@ -2,7 +2,6 @@ package io.wingpane.uc
 
 import android.app.KeyguardManager
 import android.os.Build
-import android.view.ViewConfiguration
 import io.wingpane.WingpaneApplication
 import io.wingpane.net.ClientState
 import io.wingpane.net.WingpaneClient
@@ -14,13 +13,11 @@ import io.wingpane.proto.UcEdge
 import io.wingpane.proto.UcExitReason
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
-import kotlin.math.hypot
 
 /** Owns UC effects on the accessibility service's main thread. */
 class UcController(private val service: WingpaneAccessibilityService, private val client: WingpaneClient) {
@@ -32,9 +29,6 @@ class UcController(private val service: WingpaneAccessibilityService, private va
     private var state: UcClientState = UcClientState.Idle
     private var lastFlags: UInt? = null
     private var lastOverflow = client.droppedHostInputCount
-    private var discreteDx = 0f
-    private var discreteDy = 0f
-    private var discreteJob: Job? = null
     val inside: Boolean get() = state is UcClientState.Inside
     val edge: UcEdge? get() = when (val s = state) {
         UcClientState.Idle -> null
@@ -108,36 +102,14 @@ class UcController(private val service: WingpaneAccessibilityService, private va
             is InputEvent.PointerDelta -> pointer.move(event.dx, event.dy)
             is InputEvent.MouseButton -> pointer.button(event.button.toInt(), event.isDown)
             is InputEvent.PreciseScroll -> {
-                val direction = if (prefs.getBoolean("reverse_scroll", false)) -1f else 1f
-                val dx = event.dx * direction
-                val dy = event.dy * direction
-                when (event.phase) {
-                    ScrollPhase.Discrete -> {
-                        discreteDx += dx; discreteDy += dy
-                        discreteJob?.cancel()
-                        discreteJob = scope.launch {
-                            delay(40)
-                            val length = hypot(discreteDx, discreteDy)
-                            if (length > 0f) {
-                                val minimum = 2f * ViewConfiguration.get(service).scaledTouchSlop / service.resources.displayMetrics.density
-                                val scale = maxOf(1f, minimum / length)
-                                pointer.scroll(discreteDx * scale, discreteDy * scale, CursorEvent.Phase.Discrete)
-                            }
-                            discreteDx = 0f; discreteDy = 0f
-                        }
-                    }
-                    ScrollPhase.Began -> {
-                        pointer.scroll(0f, 0f, CursorEvent.Phase.Began)
-                        if (dx != 0f || dy != 0f) pointer.scroll(dx, dy, CursorEvent.Phase.Changed)
-                    }
-                    ScrollPhase.Changed -> pointer.scroll(dx, dy, CursorEvent.Phase.Changed)
-                    ScrollPhase.Ended -> {
-                        if (dx != 0f || dy != 0f) pointer.scroll(dx, dy, CursorEvent.Phase.Changed)
-                        pointer.scroll(0f, 0f, CursorEvent.Phase.Changed)
-                        pointer.scroll(0f, 0f, CursorEvent.Phase.Ended)
-                    }
-                    ScrollPhase.Momentum -> Unit
+                val phase = when (event.phase) {
+                    ScrollPhase.Discrete -> CursorEvent.Phase.Discrete
+                    ScrollPhase.Began -> CursorEvent.Phase.Began
+                    ScrollPhase.Changed -> CursorEvent.Phase.Changed
+                    ScrollPhase.Ended -> CursorEvent.Phase.Ended
+                    ScrollPhase.Momentum -> CursorEvent.Phase.Momentum
                 }
+                pointer.scroll(event.dx, event.dy, phase, prefs.getBoolean("reverse_scroll", false))
             }
             is InputEvent.Keyboard -> {
                 val style = if (prefs.getBoolean("old_tone", false)) ToneStyle.Old else ToneStyle.New
@@ -172,7 +144,6 @@ class UcController(private val service: WingpaneAccessibilityService, private va
         val result = reduceUc(state, event)
         state = result.state
         if (UcClientEffect.CancelAll in result.effects || UcClientEffect.HideCursor in result.effects) {
-            discreteJob?.cancel(); discreteJob = null; discreteDx = 0f; discreteDy = 0f
             service.exitUc()
             keys.reset()
         }
