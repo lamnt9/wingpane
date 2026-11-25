@@ -43,6 +43,9 @@ import io.wingpane.ui.hud.StreamTouchPoint
 import io.wingpane.ui.screen.ConnectionScreen
 import io.wingpane.ui.screen.PenCanvasScreen
 import io.wingpane.ui.screen.TrackpadScreen
+import io.wingpane.ui.screen.AndroidControlScreen
+import io.wingpane.uc.WingpaneAccessibilityService
+import android.provider.Settings
 import io.wingpane.ui.state.ClientStateMapper
 import io.wingpane.ui.theme.WingpaneTheme
 import io.wingpane.video.VideoDecoder
@@ -59,6 +62,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var decoder: VideoDecoder
     private var clientState by mutableStateOf<ClientState>(ClientState.Waiting)
     private var mode by mutableStateOf(Mode.ExtendedDisplay)
+    private var ucServiceConnected by mutableStateOf(false)
+    private var ucFgsRunning by mutableStateOf(false)
+    private var ucEdge by mutableStateOf<io.wingpane.proto.UcEdge?>(null)
     private var activeTrackpadDetector: TrackpadGestureDetector? = null
     private var stats by mutableStateOf(VideoDecoder.Stats(0f, 0, 0, 0, 0, 0, 0, 0, 0))
     private var lastBitrateKbps by mutableStateOf(0u)
@@ -88,17 +94,22 @@ class MainActivity : ComponentActivity() {
         applyImmersiveSticky()
         decoder = VideoDecoder({ lifecycleScope.launch { client.sendControl(ControlMessage.RequestKeyframe) } }) { stats = it }
         client = (application as WingpaneApplication).clientHolder.client
+        mode = (application as WingpaneApplication).currentMode
         client.onClockSync = clockSyncCallback
         if (client.state.value is ClientState.Waiting) client.connect()
         lifecycleScope.launch {
-            var wasActive = false
+            var wasActive = client.state.value is ClientState.Active
             client.state.collect { nextState ->
                 val activeNow = nextState is ClientState.Active
+                val becameActive = !wasActive && activeNow
                 if (wasActive && !activeNow) cancelTouch()
                 wasActive = activeNow
                 clientState = nextState
                 if (nextState is ClientState.Active) {
-                    mode = Mode.ExtendedDisplay
+                    if (becameActive) {
+                        mode = Mode.ExtendedDisplay
+                        (application as WingpaneApplication).currentMode = mode
+                    }
                     if (!penTargetCustomized) penTarget = PenTarget.VirtualDisplay
                     lastBitrateKbps = nextState.accept.bitrateKbps
                     nextState.accept.virtualDisplaySpec?.let { spec ->
@@ -111,6 +122,19 @@ class MainActivity : ComponentActivity() {
                         touchMapperWidth = w
                         touchMapperHeight = h
                         decoder.configure(w, h)
+                    }
+                }
+            }
+        }
+        lifecycleScope.launch {
+            client.ucControl.collect { message ->
+                if (message is ControlMessage.SetMode) {
+                    cancelTouch()
+                    mode = message.mode
+                    (application as WingpaneApplication).currentMode = mode
+                    if (mode == Mode.AndroidControl && WingpaneAccessibilityService.current() != null) {
+                        (application as WingpaneApplication).startUcServiceIfEligible()
+                        moveTaskToBack(true)
                     }
                 }
             }
@@ -255,10 +279,17 @@ class MainActivity : ComponentActivity() {
                             mode = mode,
                             hostFeatures = hostFeatures,
                             capabilitiesReceived = hostCapabilitiesReceived,
-                            onModeChange = { next ->
+                            onModeChange = modeChange@ { next ->
                                 if (next != mode) {
+                                    if (next == Mode.AndroidControl && !client.supportsUniversalControl()) return@modeChange
+                                    if (next == Mode.AndroidControl && WingpaneAccessibilityService.current() == null) {
+                                        android.widget.Toast.makeText(this@MainActivity, R.string.uc_enable_service_hint, android.widget.Toast.LENGTH_LONG).show()
+                                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                        return@modeChange
+                                    }
                                     cancelTouch()
                                     mode = next
+                                    (application as WingpaneApplication).currentMode = next
                                     if (!penTargetCustomized) {
                                         penTarget = when (next) {
                                             Mode.GraphicsTablet -> PenTarget.MainDisplay
@@ -268,6 +299,10 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch {
                                         client.sendControl(ControlMessage.SetMode(next))
                                         if (next == Mode.ExtendedDisplay) client.sendControl(ControlMessage.RequestKeyframe)
+                                    }
+                                    if (next == Mode.AndroidControl) {
+                                        (application as WingpaneApplication).startUcServiceIfEligible()
+                                        moveTaskToBack(true)
                                     }
                                 }
                             },
@@ -301,6 +336,15 @@ class MainActivity : ComponentActivity() {
                                 client.disconnect()
                                 client.connect()
                             },
+                        )
+                    }
+                    if (uiModel.isStreamScreen && mode == Mode.AndroidControl) {
+                        AndroidControlScreen(
+                            serviceConnected = ucServiceConnected,
+                            fgsRunning = ucFgsRunning,
+                            edge = ucEdge,
+                            onDisplay = { handleUcNotificationAction(Intent().setAction(io.wingpane.uc.UcForegroundService.ACTION_DISPLAY)) },
+                            onAccessibilitySettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                         )
                     }
                 }
@@ -471,6 +515,9 @@ class MainActivity : ComponentActivity() {
         ucServiceCheck = lifecycleScope.launch {
             while (true) {
                 app.startUcServiceIfEligible()
+                ucServiceConnected = WingpaneAccessibilityService.current() != null
+                ucFgsRunning = app.foregroundServiceRunning
+                ucEdge = WingpaneAccessibilityService.current()?.ucEdge()
                 delay(500)
             }
         }
@@ -484,6 +531,7 @@ class MainActivity : ComponentActivity() {
         if (intent?.action != io.wingpane.uc.UcForegroundService.ACTION_DISPLAY) return
         intent.action = null
         mode = Mode.ExtendedDisplay
+        (application as WingpaneApplication).currentMode = mode
         lifecycleScope.launch {
             client.sendControl(ControlMessage.SetMode(Mode.ExtendedDisplay))
             client.sendControl(ControlMessage.RequestKeyframe)

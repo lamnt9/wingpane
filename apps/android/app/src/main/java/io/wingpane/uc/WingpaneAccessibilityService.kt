@@ -10,6 +10,7 @@ import android.graphics.Path
 import android.view.inputmethod.EditorInfo
 import android.view.accessibility.AccessibilityEvent
 import java.lang.ref.WeakReference
+import io.wingpane.WingpaneApplication
 
 /** Standalone U1 injector. It has no dependency on a Mac connection or protocol traffic. */
 class WingpaneAccessibilityService : AccessibilityService() {
@@ -42,14 +43,19 @@ class WingpaneAccessibilityService : AccessibilityService() {
     }
     private var overlay: CursorOverlay? = null
     private var cursorModel: CursorModel? = null
+    private var queue: GestureQueue? = null
+    private var controller: UcController? = null
     private lateinit var adapter: GestureAdapter
     private val planner = PointerGesturePlanner()
     private var buttonsDown = false
     private val injector = object : UcInjector {
         override fun move(dx: Float,dy: Float,nowMs:Long) {
             val model=cursorModel ?: return
-            val old=model.position(); model.move(dx,dy,nowMs,resources.displayMetrics.density)
-            overlay?.update(model.position().x,model.position().y)
+            model.move(dx * resources.displayMetrics.density,dy * resources.displayMetrics.density,nowMs,resources.displayMetrics.density)?.let {
+                controller?.returnMouse()
+                return
+            }
+            overlay?.update(model.position().x/resources.displayMetrics.density,model.position().y/resources.displayMetrics.density)
             planner.onEvent(CursorEvent.Move(model.position().x,model.position().y,nowMs)).forEach(adapter::submit)
         }
         override fun button(button:Int,down:Boolean,nowMs:Long) {
@@ -58,7 +64,8 @@ class WingpaneAccessibilityService : AccessibilityService() {
             planner.onEvent(CursorEvent.Button(button,down,p.x,p.y,nowMs)).forEach(adapter::submit)
         }
         override fun scroll(dx:Float,dy:Float,phase:CursorEvent.Phase,nowMs:Long) {
-            planner.onEvent(CursorEvent.Scroll(dx,dy,phase,nowMs)).forEach(adapter::submit)
+            val density = resources.displayMetrics.density
+            planner.onEvent(CursorEvent.Scroll(dx*density,dy*density,phase,nowMs)).forEach(adapter::submit)
         }
         override fun global(action:Int)=performGlobalAction(action)
         override fun text(value:String) {
@@ -78,16 +85,36 @@ class WingpaneAccessibilityService : AccessibilityService() {
         }
         val dm=resources.displayMetrics
         cursorModel=CursorModel(dm.widthPixels,dm.heightPixels)
-        val queue=GestureQueue({ gesture,callback -> dispatchGesture(gesture,callback,null) })
-        adapter=GestureAdapter(queue)
-        overlay=CursorOverlay(this).also { it.show(); it.update(cursorModel!!.position().x,cursorModel!!.position().y) }
+        queue=GestureQueue({ gesture,callback -> dispatchGesture(gesture,callback,null) })
+        adapter=GestureAdapter(queue!!)
+        overlay=CursorOverlay(this)
         Registry.ref=WeakReference(this)
+        controller=UcController(this, (application as WingpaneApplication).clientHolder.client).also { it.start() }
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) { }
-    override fun onInterrupt() { planner.cancelAll().forEach(adapter::submit); overlay?.hide(); setRemoteKeyboardActive(false); Registry.ref=null }
+    override fun onInterrupt() {
+        controller?.stop(); controller=null
+        cancelUcGestures(); overlay?.hide(); setRemoteKeyboardActive(false); Registry.ref=null
+    }
     override fun onUnbind(intent: Intent?): Boolean { onInterrupt(); return super.onUnbind(intent) }
     override fun onDestroy() { onInterrupt(); super.onDestroy() }
     fun injector(): UcInjector = injector
+    fun enterUc(edge: CursorModel.Edge, along: Float, gain: Float) {
+        val dm=resources.displayMetrics
+        val model=cursorModel ?: CursorModel(dm.widthPixels,dm.heightPixels).also { cursorModel=it }
+        model.resize(dm.widthPixels,dm.heightPixels)
+        model.entryEdge=edge; model.gain=gain; model.setAlong(along)
+        overlay?.show(); overlay?.update(model.x/dm.density,model.y/dm.density)
+        setRemoteKeyboardActive(true)
+    }
+    fun exitUc() { cancelUcGestures(); overlay?.hide(); setRemoteKeyboardActive(false) }
+    // Drop pending moves, then submit the StrokeEnd from cancelAll() so a drag in progress lifts its finger.
+    private fun cancelUcGestures() { queue?.clear(); planner.cancelAll().forEach(adapter::submit) }
+    fun cursorAlong(): Float = cursorModel?.along() ?: 0.5f
+    fun returnMouse() { controller?.returnMouse() }
+    fun overlayShown(): Boolean = controller?.inside == true
+    fun ucEdge(): io.wingpane.proto.UcEdge? = controller?.edge
+    fun gesturesAvailable(): Boolean = serviceInfo?.capabilities?.and(AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES) != 0
     private object Registry { @Volatile var ref: WeakReference<WingpaneAccessibilityService>?=null }
     companion object {
         fun current(): WingpaneAccessibilityService? = Registry.ref?.get()

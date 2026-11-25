@@ -29,6 +29,13 @@ sealed interface ClientState {
     data object Disconnected : ClientState
 }
 
+internal fun clientFeatures(universalControlEnabled: Boolean): UInt =
+    (1u shl 1) or (1u shl 2) or (1u shl 3) or (1u shl 7) or
+        (if (universalControlEnabled) 1u shl 8 else 0u)
+
+/** One switch for advertising and accepting Universal Control protocol traffic. */
+object UcFeatureFlags { const val enabled = true }
+
 /** Pure connection policy. The loss timestamp belongs to the episode, not an attempt. */
 internal class ConnectionStateMachine private constructor(private val model: Model) {
     internal data class Model(
@@ -111,6 +118,7 @@ class WingpaneClient(
     private val nanoTime: () -> Long = System::nanoTime,
     // System.nanoTime == CLOCK_MONOTONIC on Android; SystemClock.uptimeNanos() is API 35+ (minSdk is 29).
     private val inputTimeUs: () -> Long = { System.nanoTime() / 1_000L },
+    val universalControlEnabled: Boolean = UcFeatureFlags.enabled,
 ) {
     val clockOffsetEstimator = ClockOffsetEstimator()
     @Volatile var clockSync: ClockOffsetEstimator.Estimate? = null
@@ -136,6 +144,12 @@ class WingpaneClient(
     private val otherIncoming = Channel<Packet>(Channel.UNLIMITED)
     /** Only video and input packets are emitted; control messages are consumed by the client. */
     val packets: Flow<Packet> = merge(videoIncoming.receiveAsFlow(), otherIncoming.receiveAsFlow())
+    private val mutableUcControl = MutableSharedFlow<ControlMessage>(extraBufferCapacity = 64)
+    val ucControl: SharedFlow<ControlMessage> = mutableUcControl.asSharedFlow()
+    private val mutableHostInput = MutableSharedFlow<InputEvent>(extraBufferCapacity = 4096)
+    val hostInput: SharedFlow<InputEvent> = mutableHostInput.asSharedFlow()
+    private val hostInputOverflowCount = AtomicLong()
+    val droppedHostInputCount: Long get() = hostInputOverflowCount.get()
 
     private var job: Job? = null
     @Volatile private var socket: Socket? = null
@@ -260,7 +274,7 @@ class WingpaneClient(
                                         mutableHostFeatures.value = 0
                                         mutableHostCapabilitiesReceived.value = false
                                         reduce(ConnectionStateMachine.Event.AcceptReceived(message))
-                                        send(thisSocket, Packet.Control(ControlMessage.Capabilities((1u shl 1) or (1u shl 2) or (1u shl 3) or (1u shl 7))))
+                                        send(thisSocket, Packet.Control(ControlMessage.Capabilities(clientFeatures(universalControlEnabled))))
                                     }
                                     is ControlMessage.Reject -> {
                                         reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))
@@ -320,6 +334,10 @@ class WingpaneClient(
                                         mutableHostFeatures.value = message.features.toInt()
                                         mutableHostCapabilitiesReceived.value = true
                                     }
+                                    is ControlMessage.UcConfig, is ControlMessage.UcEnter,
+                                    is ControlMessage.UcExit, is ControlMessage.SetMode -> {
+                                        if (supportsUniversalControl()) mutableUcControl.emit(message)
+                                    }
                                     is ControlMessage.Reject -> {
                                         reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))
                                         break@activeRead
@@ -367,8 +385,13 @@ class WingpaneClient(
     }
 
     suspend fun sendControl(message: ControlMessage) = withContext(ioDispatcher) {
+        if ((message is ControlMessage.SetMode && message.mode == Mode.AndroidControl ||
+                message is ControlMessage.UcExit || message is ControlMessage.UcStatus) && !supportsUniversalControl()) return@withContext
         socket?.let { send(it, Packet.Control(message)) }
     }
+
+    fun supportsUniversalControl(): Boolean = universalControlEnabled &&
+        mutableHostCapabilitiesReceived.value && (mutableHostFeatures.value and FEATURE_UNIVERSAL_CONTROL) != 0
 
     fun cancel() {
         stopped.set(true)
@@ -395,12 +418,15 @@ class WingpaneClient(
                 if (videoReceivedAtNs.size > 240) videoReceivedAtNs.keys.firstOrNull()?.let(videoReceivedAtNs::remove)
                 videoIncoming.trySend(packet)
             }
+        } else if (packet is Packet.Input) {
+            if (supportsUniversalControl() && !mutableHostInput.tryEmit(packet.packet.event)) hostInputOverflowCount.incrementAndGet()
         } else {
             otherIncoming.trySend(packet)
         }
     }
 
     private companion object {
+        const val FEATURE_UNIVERSAL_CONTROL = 1 shl 8
         const val CONNECT_TIMEOUT_MS = 3_000
         const val HANDSHAKE_TIMEOUT_NS = 3_000_000_000L
         const val PONG_TIMEOUT_NS = 2_000_000_000L

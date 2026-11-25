@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.os.Build
 import io.wingpane.net.WingpaneClient
+import io.wingpane.proto.Mode
 import io.wingpane.uc.UcForegroundService
 
 /** Lazily holds the single current client across Activity recreation. */
@@ -20,9 +21,10 @@ class WingpaneApplication : Application() {
     val clientHolder = ClientHolder { WingpaneClient() }
     @Volatile var ucForceFgs = false
     @Volatile var foregroundServiceRunning = false
+    @Volatile var currentMode: Mode = Mode.ExtendedDisplay
 
     fun startUcServiceIfEligible() {
-        if (!clientHolder.client.isActive()) return
+        if (!clientHolder.client.isActive() || !clientHolder.client.supportsUniversalControl()) return
         if (io.wingpane.uc.WingpaneAccessibilityService.current() == null && !ucForceFgs) return
         if (foregroundServiceRunning) return
         val intent = Intent(this, UcForegroundService::class.java)

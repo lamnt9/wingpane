@@ -34,6 +34,8 @@ class UcForegroundService : Service() {
             while (true) {
                 val state = app.clientHolder.client.state.value
                 if (state is ClientState.Disconnected || state is ClientState.Lost ||
+                    (app.clientHolder.client.hostCapabilitiesReceived.value &&
+                        !app.clientHolder.client.supportsUniversalControl()) ||
                     (WingpaneAccessibilityService.current() == null && !app.ucForceFgs)) {
                     stopSelf()
                     break
@@ -45,7 +47,7 @@ class UcForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_RETURN_MOUSE) {
-            // TODO(WP-U6): send UcExit
+            WingpaneAccessibilityService.current()?.returnMouse()
         }
         return START_NOT_STICKY
     }
