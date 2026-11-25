@@ -174,11 +174,16 @@ enum DisplayTransition {
     Create,
 }
 
+/// Display + Trackpad keep the virtual display (Trackpad shows it above the pad); only Pen removes it.
+fn mode_has_display(mode: Mode) -> bool {
+    mode != Mode::GraphicsTablet
+}
+
 fn display_transition(prev: Mode, next: Mode, suspend_supported: bool) -> DisplayTransition {
     if !suspend_supported {
         return DisplayTransition::None;
     }
-    match (prev == Mode::ExtendedDisplay, next == Mode::ExtendedDisplay) {
+    match (mode_has_display(prev), mode_has_display(next)) {
         (true, false) => DisplayTransition::Remove,
         (false, true) => DisplayTransition::Create,
         _ => DisplayTransition::None,
@@ -218,7 +223,7 @@ const HOST_INPUT_FEATURES: u32 = FEATURE_PEN_PRESSURE
     | FEATURE_VIDEO_SUSPEND;
 
 fn should_send_video(mode: Mode, awaiting_key: bool, frame_is_key: bool) -> bool {
-    mode == Mode::ExtendedDisplay && !(awaiting_key && !frame_is_key)
+    mode_has_display(mode) && !(awaiting_key && !frame_is_key)
 }
 
 #[cfg(test)]
@@ -231,11 +236,11 @@ mod display_transition_tests {
             DisplayTransition::Remove
         );
         assert_eq!(
-            display_transition(Mode::TrackpadKeyboard, Mode::ExtendedDisplay, true),
+            display_transition(Mode::GraphicsTablet, Mode::TrackpadKeyboard, true),
             DisplayTransition::Create
         );
         assert_eq!(
-            display_transition(Mode::GraphicsTablet, Mode::TrackpadKeyboard, true),
+            display_transition(Mode::ExtendedDisplay, Mode::TrackpadKeyboard, true),
             DisplayTransition::None
         );
         assert_eq!(
@@ -255,7 +260,7 @@ mod video_suspend_tests {
         assert!(!should_send_video(Mode::ExtendedDisplay, true, false));
         assert!(should_send_video(Mode::ExtendedDisplay, true, true));
         assert!(!should_send_video(Mode::GraphicsTablet, false, true));
-        assert!(!should_send_video(Mode::TrackpadKeyboard, false, true));
+        assert!(should_send_video(Mode::TrackpadKeyboard, false, true));
     }
 }
 impl InputSink for NativeInputSink {

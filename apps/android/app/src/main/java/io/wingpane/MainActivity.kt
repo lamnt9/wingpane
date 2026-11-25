@@ -13,6 +13,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -152,7 +154,10 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center,
                 ) {
                     val ratio = videoAspectRatio
-                    val surfaceModifier = if (lockAspectRatio && ratio != null && ratio > 0f) {
+                    val surfaceModifier = if (mode == Mode.TrackpadKeyboard) {
+                        // Trackpad mode: Mac screen on top, pad + keyboard below.
+                        Modifier.align(Alignment.TopCenter).fillMaxWidth().fillMaxHeight(0.42f)
+                    } else if (lockAspectRatio && ratio != null && ratio > 0f) {
                         Modifier
                             .fillMaxSize()
                             .aspectRatio(ratio, matchHeightConstraintsFirst = false)
@@ -195,7 +200,7 @@ class MainActivity : ComponentActivity() {
                             if (hostSupportsPen()) handleStylus(view, event, hover = event.actionMasked in setOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT)) else false
                         })
                     } else if (uiModel.isStreamScreen && mode == Mode.TrackpadKeyboard) {
-                        TrackpadScreen(detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
+                        TrackpadScreen(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.58f), detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
                             val allowed = when (event) {
                                 is InputEvent.Keyboard -> hostCapabilitiesReceived && (hostFeatures and (1 shl 3)) != 0
                                 is InputEvent.Text -> hostCapabilitiesReceived && (hostFeatures and (1 shl 4)) != 0
