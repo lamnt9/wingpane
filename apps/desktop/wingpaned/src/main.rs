@@ -16,9 +16,9 @@ use tokio::{
     task::JoinSet,
 };
 use wingpane_core::{session::Session, transport::tcp::FramedTcp};
-use wingpane_proto::{ControlMessage, Packet, RejectReason, TouchPhase, VideoPacket};
+use wingpane_proto::{ControlMessage, Mode, Packet, RejectReason, TouchPhase, VideoPacket};
 use wingpaned::{
-    busy_rejection, handle_input, EncodedFrame, FrameQueue, InputSink, SessionResources,
+    busy_rejection, EncodedFrame, FrameQueue, InputRouter, InputSink, SessionResources,
 };
 
 struct CallbackContext {
@@ -195,6 +195,10 @@ enum StatusEvent {
         height: u32,
         hz: u32,
         hidpi: bool,
+        input_trusted: bool,
+    },
+    Mode {
+        mode: Mode,
     },
     Stats {
         fps: u64,
@@ -758,7 +762,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
             .handle
             .store(capture.handle(), Ordering::Relaxed);
     }
-    let resources = SessionResources {
+    let mut resources = SessionResources {
         capture: Box::new(capture),
         input: Box::new(NativeInputSink(display.id())),
         display: Box::new(display),
@@ -769,6 +773,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
             height: client_h,
             hz,
             hidpi: opts.hidpi,
+            input_trusted: unsafe { wp_input_trusted() },
         });
     }
     let stats_queue = queue.clone();
@@ -800,7 +805,11 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
             }
         }
     });
-    let mut warned_unsupported_input = false;
+    let mut input_router = InputRouter::new(Mode::ExtendedDisplay, resources.input.as_mut());
+    let mut unknown_packet_warned = false;
+    let mut input_trusted = unsafe { wp_input_trusted() };
+    let mut client_capabilities_seen = false;
+    let mut trust_check_at = tokio::time::Instant::now();
     loop {
         let received = if opts.stats || status_json {
             tokio::select! {
@@ -837,14 +846,39 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                 break;
             }
             Err(e) => {
+                if matches!(
+                    e,
+                    wingpane_core::transport::tcp::TransportError::UnknownPacket
+                ) {
+                    if !unknown_packet_warned {
+                        eprintln!("ignoring unknown protocol packet");
+                        unknown_packet_warned = true;
+                    }
+                    continue;
+                }
                 end_log.reason = format!("read error: {e}");
                 break;
             }
             Ok(Some(Packet::Control(message))) => {
+                let message = match message {
+                    ControlMessage::SetMode(next_mode) => {
+                        input_router.set_mode(next_mode);
+                        if status_json {
+                            emit_status(StatusEvent::Mode { mode: next_mode });
+                        }
+                        continue;
+                    }
+                    ControlMessage::Capabilities { .. } => {
+                        client_capabilities_seen = true;
+                        ControlMessage::Capabilities { features: 0 }
+                    }
+                    other => other,
+                };
                 for reply in wingpaned::handle_control_messages(
                     resources.capture.as_ref(),
                     message,
                     ffi::host_time_us(),
+                    if input_trusted { 1 << 6 } else { 0 },
                 ) {
                     if control_tx.send(Packet::Control(reply)).is_err() {
                         break;
@@ -852,15 +886,30 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                 }
             }
             Ok(Some(Packet::Input(input))) => {
-                if !handle_input(resources.input.as_ref(), input) && !warned_unsupported_input {
-                    eprintln!("ignoring unsupported input event kinds (only Touch is handled)");
-                    warned_unsupported_input = true;
+                if tokio::time::Instant::now() >= trust_check_at {
+                    trust_check_at = tokio::time::Instant::now() + Duration::from_secs(2);
+                    let now_trusted = unsafe { wp_input_trusted() };
+                    if now_trusted != input_trusted {
+                        input_trusted = now_trusted;
+                        if status_json && !input_trusted {
+                            emit_status(StatusEvent::Error {
+                                message: "Accessibility permission missing".into(),
+                            });
+                        }
+                        if client_capabilities_seen {
+                            let features = if input_trusted { 1 << 6 } else { 0 };
+                            let _ = control_tx
+                                .send(Packet::Control(ControlMessage::Capabilities { features }));
+                        }
+                    }
                 }
+                input_router.handle_input(input);
             }
             Ok(Some(_)) => {}
         }
     }
     drop(_test_pattern);
+    drop(input_router);
     drop(resources);
     writer_task.abort();
     let _ = writer_task.await;
@@ -967,8 +1016,9 @@ mod tests {
                     height: 720,
                     hz: 60,
                     hidpi: true,
+                    input_trusted: false,
                 },
-                json!({"event":"streaming","width":1280,"height":720,"hz":60,"hidpi":true}),
+                json!({"event":"streaming","width":1280,"height":720,"hz":60,"hidpi":true,"input_trusted":false}),
             ),
             (
                 StatusEvent::Stats {

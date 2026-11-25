@@ -102,6 +102,86 @@ pub trait DisplayResource: Send {
 pub trait InputSink: Send {
     fn pointer(&self, x: f32, y: f32, phase: wingpane_proto::TouchPhase);
     fn release_all(&self);
+    fn pen(&self, _sample: PenSample) {}
+    fn relative(&self, _dx: f32, _dy: f32) {}
+    fn button(&self, _button: u8, _is_down: bool) {}
+    fn scroll(&self, _dx: f32, _dy: f32) {}
+    fn key(&self, _hid: u16, _down: bool, _mods: u8) {}
+    fn text(&self, _text: &str) {}
+    fn set_mode(&self, _mode: wingpane_proto::Mode) {}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PenSample {
+    pub x: f32,
+    pub y: f32,
+    pub pressure: f32,
+    pub tilt_x: i8,
+    pub tilt_y: i8,
+    pub is_down: bool,
+    pub is_hover: bool,
+    pub button_mask: u8,
+}
+
+pub struct InputRouter<'a> {
+    mode: wingpane_proto::Mode,
+    sink: &'a mut dyn InputSink,
+}
+impl<'a> InputRouter<'a> {
+    pub fn new(mode: wingpane_proto::Mode, sink: &'a mut dyn InputSink) -> Self {
+        Self { mode, sink }
+    }
+    pub fn mode(&self) -> wingpane_proto::Mode {
+        self.mode
+    }
+    pub fn set_mode(&mut self, mode: wingpane_proto::Mode) {
+        self.sink.release_all();
+        self.mode = mode;
+        self.sink.set_mode(mode);
+    }
+    pub fn handle_input(&self, packet: wingpane_proto::InputPacket) -> bool {
+        use wingpane_proto::{InputEvent, Mode};
+        match packet.event {
+            InputEvent::Touch { x, y, phase, .. } if self.mode == Mode::ExtendedDisplay => {
+                self.sink.pointer(x, y, phase)
+            }
+            InputEvent::Pen {
+                x,
+                y,
+                pressure,
+                tilt_x,
+                tilt_y,
+                is_down,
+                is_hover,
+                button_mask,
+                ..
+            } => self.sink.pen(PenSample {
+                x,
+                y,
+                pressure,
+                tilt_x,
+                tilt_y,
+                is_down,
+                is_hover,
+                button_mask,
+            }),
+            InputEvent::PointerDelta { dx, dy } if self.mode == Mode::TrackpadKeyboard => {
+                self.sink.relative(dx, dy)
+            }
+            InputEvent::Scroll { dx, dy } if self.mode == Mode::TrackpadKeyboard => {
+                self.sink.scroll(dx, dy)
+            }
+            InputEvent::Keyboard {
+                usb_hid_usage,
+                is_down,
+                modifiers,
+            } if self.mode == Mode::TrackpadKeyboard => {
+                self.sink.key(usb_hid_usage, is_down, modifiers)
+            }
+            _ => return false,
+        }
+        true
+    }
 }
 
 pub struct SessionResources {
@@ -118,12 +198,39 @@ impl Drop for SessionResources {
 }
 
 pub fn handle_input(sink: &dyn InputSink, packet: wingpane_proto::InputPacket) -> bool {
-    if let wingpane_proto::InputEvent::Touch { x, y, phase, .. } = packet.event {
-        sink.pointer(x, y, phase);
-        true
-    } else {
-        false
+    use wingpane_proto::InputEvent;
+    match packet.event {
+        InputEvent::Touch { x, y, phase, .. } => sink.pointer(x, y, phase),
+        InputEvent::Pen {
+            x,
+            y,
+            pressure,
+            tilt_x,
+            tilt_y,
+            is_down,
+            is_hover,
+            button_mask,
+            ..
+        } => sink.pen(PenSample {
+            x,
+            y,
+            pressure,
+            tilt_x,
+            tilt_y,
+            is_down,
+            is_hover,
+            button_mask,
+        }),
+        InputEvent::PointerDelta { dx, dy } => sink.relative(dx, dy),
+        InputEvent::Scroll { dx, dy } => sink.scroll(dx, dy),
+        InputEvent::Gesture(_) => return false,
+        InputEvent::Keyboard {
+            usb_hid_usage,
+            is_down,
+            modifiers,
+        } => sink.key(usb_hid_usage, is_down, modifiers),
     }
+    true
 }
 
 pub fn handle_control(
@@ -146,6 +253,7 @@ pub fn handle_control_messages(
     source: &dyn CaptureSource,
     message: wingpane_proto::ControlMessage,
     host_us: u64,
+    host_features: u32,
 ) -> Vec<wingpane_proto::ControlMessage> {
     use wingpane_proto::ControlMessage;
     match message {
@@ -153,6 +261,11 @@ pub fn handle_control_messages(
             ControlMessage::Pong(echo_ns),
             ControlMessage::HostTime { echo_ns, host_us },
         ],
+        ControlMessage::Capabilities { .. } => {
+            vec![ControlMessage::Capabilities {
+                features: host_features,
+            }]
+        }
         other => handle_control(source, other).into_iter().collect(),
     }
 }
@@ -228,6 +341,24 @@ mod tests {
             Some(wingpane_proto::ControlMessage::Pong(9))
         );
         assert_eq!(fake.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn capabilities_reply_advertises_accessibility_bit_only() {
+        struct Fake;
+        impl CaptureSource for Fake {
+            fn force_keyframe(&self) {}
+            fn stop(&self) {}
+        }
+        assert_eq!(
+            handle_control_messages(
+                &Fake,
+                wingpane_proto::ControlMessage::Capabilities { features: 0 },
+                0,
+                1 << 6
+            ),
+            vec![wingpane_proto::ControlMessage::Capabilities { features: 1 << 6 }]
+        );
     }
 
     #[test]
@@ -329,6 +460,47 @@ mod tests {
         assert_eq!(
             got.iter().map(|(x, _, _)| *x).collect::<Vec<_>>(),
             [0.1, 0.2, 0.3]
+        );
+    }
+
+    #[test]
+    fn router_keeps_touch_and_releases_before_mode_change() {
+        struct Recording(Mutex<Vec<&'static str>>);
+        impl InputSink for Recording {
+            fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {
+                self.0.lock().unwrap().push("pointer");
+            }
+            fn release_all(&self) {
+                self.0.lock().unwrap().push("release");
+            }
+            fn set_mode(&self, _: wingpane_proto::Mode) {
+                self.0.lock().unwrap().push("mode");
+            }
+            fn relative(&self, _: f32, _: f32) {
+                self.0.lock().unwrap().push("relative");
+            }
+        }
+        let mut sink = Recording(Mutex::new(Vec::new()));
+        let mut router = InputRouter::new(wingpane_proto::Mode::ExtendedDisplay, &mut sink);
+        assert!(router.handle_input(wingpane_proto::InputPacket {
+            seq: 1,
+            ts_us: 1,
+            event: wingpane_proto::InputEvent::Touch {
+                pointer_id: 0,
+                x: 0.1,
+                y: 0.2,
+                phase: wingpane_proto::TouchPhase::Down
+            }
+        }));
+        router.set_mode(wingpane_proto::Mode::TrackpadKeyboard);
+        assert!(router.handle_input(wingpane_proto::InputPacket {
+            seq: 2,
+            ts_us: 2,
+            event: wingpane_proto::InputEvent::PointerDelta { dx: 1.0, dy: 2.0 }
+        }));
+        assert_eq!(
+            *sink.0.lock().unwrap(),
+            ["pointer", "release", "mode", "relative"]
         );
     }
 

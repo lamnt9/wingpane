@@ -124,6 +124,7 @@ fun StreamHudOverlay(
     stats: VideoDecoder.Stats,
     bitrateKbps: UInt,
     isReconnecting: Boolean,
+    accessibilityMissing: Boolean,
     keepHudVisible: Boolean,
     lockAspectRatio: Boolean,
     onLockAspectRatioChange: (Boolean) -> Unit,
@@ -312,6 +313,7 @@ fun StreamHudOverlay(
                     },
             ) {
                 ExpandedHudPanel(
+                    accessibilityMissing = accessibilityMissing,
                     fps = displayedFps,
                     latencyMs = displayedLatencyMs,
                     bitrateMbps = bitrateKbps.toFloat() / 1000f,
@@ -498,6 +500,7 @@ private fun CollapsedHudHalfPill(
 
 @Composable
 private fun ExpandedHudPanel(
+    accessibilityMissing: Boolean,
     fps: Int,
     latencyMs: Long,
     bitrateMbps: Float,
@@ -549,6 +552,14 @@ private fun ExpandedHudPanel(
                 .padding(spacing.md),
             verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
+            if (accessibilityMissing) {
+                Text(
+                    text = stringResource(R.string.hud_accessibility_missing),
+                    style = WingpaneTheme.typography.captionStrong,
+                    color = colors.text,
+                    modifier = Modifier.fillMaxWidth().background(colors.surface2).padding(spacing.sm),
+                )
+            }
             // Header: Filled Connected status chip (#3DDC97 fill, #000 text) + Close button
             Row(
                 modifier = Modifier.fillMaxWidth(),

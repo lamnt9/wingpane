@@ -28,6 +28,7 @@ pub enum FrameError {
     EmptyFrame,
     FrameTooLarge(u32),
     Decode,
+    UnknownPacket,
     Encode,
 }
 impl fmt::Display for FrameError {
@@ -36,6 +37,7 @@ impl fmt::Display for FrameError {
             Self::EmptyFrame => f.write_str("empty frame"),
             Self::FrameTooLarge(n) => write!(f, "frame too large: {n}"),
             Self::Decode => f.write_str("frame decode failed"),
+            Self::UnknownPacket => f.write_str("unknown packet tag"),
             Self::Encode => f.write_str("frame encode failed"),
         }
     }
@@ -113,8 +115,14 @@ impl FrameDecoder {
             return Ok(None);
         }
         let start = self.cursor + 4;
-        let decoded = postcard::from_bytes::<Packet>(&self.bytes[start..start + len as usize])
-            .map_err(|_| FrameError::Decode);
+        let body = &self.bytes[start..start + len as usize];
+        let decoded = postcard::from_bytes::<Packet>(body).map_err(|_| {
+            if has_unknown_tag(body) {
+                FrameError::UnknownPacket
+            } else {
+                FrameError::Decode
+            }
+        });
         self.cursor += total;
         if self.cursor == self.bytes.len() {
             self.bytes.clear();
@@ -124,6 +132,41 @@ impl FrameDecoder {
             self.cursor = 0;
         }
         decoded.map(Some)
+    }
+}
+
+// Classify only a valid varint enum discriminant outside the currently known range.
+// All other postcard failures remain hard decode errors.
+fn has_unknown_tag(body: &[u8]) -> bool {
+    fn varint(bytes: &[u8], at: &mut usize) -> Option<u64> {
+        let mut out = 0u64;
+        for shift in (0..=63).step_by(7) {
+            let b = *bytes.get(*at)?;
+            *at += 1;
+            if shift == 63 && b > 1 {
+                return None;
+            }
+            out |= u64::from(b & 0x7f) << shift;
+            if b & 0x80 == 0 {
+                return Some(out);
+            }
+        }
+        None
+    }
+    let mut at = 0;
+    let Some(packet_tag) = varint(body, &mut at) else {
+        return false;
+    };
+    match packet_tag {
+        0 => varint(body, &mut at).is_some_and(|tag| tag > 9),
+        1 => false,
+        2 => {
+            if varint(body, &mut at).is_none() || varint(body, &mut at).is_none() {
+                return false;
+            }
+            varint(body, &mut at).is_some_and(|tag| tag > 5)
+        }
+        _ => true,
     }
 }
 impl Default for FrameDecoder {

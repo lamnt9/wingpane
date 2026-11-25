@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -88,6 +89,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             WingpaneTheme {
                 val uiModel = ClientStateMapper.map(clientState)
+                val hostFeatures by client.hostFeatures.collectAsState()
+                val hostCapabilitiesReceived by client.hostCapabilitiesReceived.collectAsState()
                 var keepHudVisible by rememberSaveable { mutableStateOf(false) }
                 var lockAspectRatio by rememberSaveable { mutableStateOf(true) }
                 var showTouches by rememberSaveable { mutableStateOf(false) }
@@ -145,6 +148,7 @@ class MainActivity : ComponentActivity() {
                             stats = stats,
                             bitrateKbps = if (uiModel.streamBitrateKbps > 0u) uiModel.streamBitrateKbps else lastBitrateKbps,
                             isReconnecting = uiModel.isReconnecting,
+                            accessibilityMissing = hostCapabilitiesReceived && (hostFeatures and (1 shl 6)) == 0,
                             keepHudVisible = keepHudVisible,
                             lockAspectRatio = lockAspectRatio,
                             onLockAspectRatioChange = { lockAspectRatio = it },

@@ -52,3 +52,8 @@ File này lưu trữ các quyết định kiến trúc quan trọng của dự �
 * **Bối cảnh:** Đo trên Galaxy A36, 2340×1080@60 qua `adb reverse`: e2e p50 18.8 ms (đạt ≤25 ms), p95 40 ms. Phân rã: encode p95 8.7 ms, ghi socket 0.1 ms, giải mã p95 14 ms, đường adb p95 ≈18 ms.
 * **Quyết định:** Phát hành MVP với p95 40 ms là known issue. Không tối ưu thêm trong Phase 1.
 * **Hệ quả:** Phase sau spike transport thay thế (USB tethering/RNDIS, Wi‑Fi QUIC theo roadmap Phase 4) và đo lại theo telemetry theo chặng (`wingpaned --stats`, logcat `WingpaneLatency`).
+
+## [ADR-007] 2026-11-25: Giữ stream khi đổi chế độ input
+* **Trạng thái:** Đã chốt trong kế hoạch Phase 2 (`docs/06-pen-trackpad-plan.md`).
+* **Quyết định:** Đổi mode không hủy virtual display hoặc capture (D-1). Áp đường cong pressure ở host làm nguồn thống nhất (D-4). Chỉ gửi tính năng sau capabilities (D-6), với `INPUT_TRUSTED` phản ánh Accessibility.
+* **Hệ quả:** Display stream tiếp tục chạy trong lúc host đổi cách định tuyến input; xử lý dữ liệu chuẩn hóa ở host.

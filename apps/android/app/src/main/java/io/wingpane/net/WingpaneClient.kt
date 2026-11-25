@@ -118,6 +118,10 @@ class WingpaneClient(
     @Volatile var onClockSync: ((ClockOffsetEstimator.Estimate) -> Unit)? = null
     private val mutableState = MutableStateFlow<ClientState>(ClientState.Waiting)
     val state: StateFlow<ClientState> = mutableState.asStateFlow()
+    private val mutableHostFeatures = MutableStateFlow(0)
+    val hostFeatures: StateFlow<Int> = mutableHostFeatures.asStateFlow()
+    private val mutableHostCapabilitiesReceived = MutableStateFlow(false)
+    val hostCapabilitiesReceived: StateFlow<Boolean> = mutableHostCapabilitiesReceived.asStateFlow()
     // Never conflate/drop here: H.264 P-frames depend on predecessors. Backlog is handled by
     // VideoDecoder (drop until next IDR + RequestKeyframe).
     private val videoIncoming = Channel<Packet>(Channel.UNLIMITED)
@@ -245,7 +249,10 @@ class WingpaneClient(
                                 is Packet.Control -> when (val message = packet.message) {
                                     is ControlMessage.Accept -> {
                                         activeAccept = message
+                                        mutableHostFeatures.value = 0
+                                        mutableHostCapabilitiesReceived.value = false
                                         reduce(ConnectionStateMachine.Event.AcceptReceived(message))
+                                        send(thisSocket, Packet.Control(ControlMessage.Capabilities(0u)))
                                     }
                                     is ControlMessage.Reject -> {
                                         reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))
@@ -300,6 +307,10 @@ class WingpaneClient(
                                             clockSync = sync
                                             onClockSync?.invoke(sync)
                                         }
+                                    }
+                                    is ControlMessage.Capabilities -> {
+                                        mutableHostFeatures.value = message.features.toInt()
+                                        mutableHostCapabilitiesReceived.value = true
                                     }
                                     is ControlMessage.Reject -> {
                                         reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))

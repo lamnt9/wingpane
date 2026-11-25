@@ -20,10 +20,18 @@ pub enum TransportError {
     Frame(String),
     #[error("incomplete frame at EOF")]
     Truncated,
+    #[error("unknown packet tag")]
+    UnknownPacket,
 }
 impl From<FrameError> for TransportError {
     fn from(error: FrameError) -> Self {
         Self::Frame(error.to_string())
+    }
+}
+fn finish_received_frame(decoder: &mut FrameDecoder) -> Result<Option<Packet>, TransportError> {
+    match decoder.next_packet() {
+        Err(FrameError::UnknownPacket) => Err(TransportError::UnknownPacket),
+        result => Ok(result?),
     }
 }
 
@@ -81,7 +89,7 @@ impl FramedTcp {
             }
         })?;
         decoder.push(&body);
-        Ok(decoder.next_packet()?)
+        finish_received_frame(&mut decoder)
     }
 }
 
@@ -118,7 +126,7 @@ impl FramedReader {
             }
         })?;
         decoder.push(&body);
-        Ok(decoder.next_packet()?)
+        finish_received_frame(&mut decoder)
     }
 }
 
@@ -157,4 +165,25 @@ pub async fn serve_session(mut framed: FramedTcp) -> Result<(), TransportError> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod unknown_packet_tests {
+    use super::*;
+    #[test]
+    fn unknown_frame_is_reported_and_following_ping_decodes() {
+        let mut decoder = FrameDecoder::new();
+        decoder.push(&[2, 0, 0, 0, 0, 99]);
+        let mut ping = Vec::new();
+        encode_frame(&Packet::Control(ControlMessage::Ping(7)), &mut ping).unwrap();
+        decoder.push(&ping);
+        assert!(matches!(
+            finish_received_frame(&mut decoder),
+            Err(TransportError::UnknownPacket)
+        ));
+        assert_eq!(
+            finish_received_frame(&mut decoder).unwrap(),
+            Some(Packet::Control(ControlMessage::Ping(7)))
+        );
+    }
 }

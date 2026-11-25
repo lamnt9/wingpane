@@ -29,7 +29,8 @@ Mỗi dòng stdout là một object JSON có trường `event`. Log người đ�
 | `device` | `serial`, `model`? | Đã chọn máy, đã `adb reverse` |
 | `listening` | `port` | Socket sẵn sàng |
 | `client_connected` | `peer` | App Android nối vào |
-| `streaming` | `width`, `height`, `hz`, `hidpi` | Đã Accept + tạo màn ảo + bắt đầu capture |
+| `streaming` | `width`, `height`, `hz`, `hidpi`, `input_trusted` | Đã Accept + tạo màn ảo + bắt đầu capture; Accessibility hiện tại |
+| `mode` | `mode` | Host nhận SetMode và đổi chế độ input |
 | `stats` | `fps`, `encode_p95_ms`, `write_p95_ms`, `backlog_dropped` | 1 lần/giây khi streaming |
 | `client_disconnected` | `reason` | Phiên kết thúc |
 | `error` | `message` | Lỗi không chết (vd mất quyền capture) |

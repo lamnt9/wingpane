@@ -16,6 +16,7 @@ class ProtocolTest {
             "control_pong" to ControlMessage.Pong(0x0807060504030201uL),
             "control_disconnect" to ControlMessage.Disconnect,
             "control_host_time" to ControlMessage.HostTime(0x1020304050607080uL, 0x2010203040506070uL),
+            "control_capabilities" to ControlMessage.Capabilities(0x45u),
             "reject_version_mismatch" to ControlMessage.Reject(RejectReason.VersionMismatch,1u),
             "reject_unsupported_codec" to ControlMessage.Reject(RejectReason.UnsupportedCodec),
             "reject_invalid_hello" to ControlMessage.Reject(RejectReason.InvalidHello),
@@ -54,6 +55,14 @@ class ProtocolTest {
         val both=FrameDecoder();both.push(frame+frame)
         assertEquals(Packet.Control(ControlMessage.Ping(0x1_0000_0000uL)),both.next())
         assertEquals(Packet.Control(ControlMessage.Ping(0x1_0000_0000uL)),both.next())
+    }
+    @Test fun unknownControlTagIsSkippedAndNextFrameDecodes() {
+        val unknown = byteArrayOf(2,0,0,0,0,99)
+        val ping = Packet.Control(ControlMessage.Ping(42uL)).encodeFrame()
+        val decoder = FrameDecoder(); decoder.push(unknown + ping)
+        assertEquals(Packet.Control(ControlMessage.Ping(42uL)), decoder.next())
+        assertEquals(1L, decoder.skippedFrames)
+        assertNull(decoder.next())
     }
     @Test fun rejectsEmptyAndOversizedBeforeBodyAllocation() {
         listOf(byteArrayOf(0,0,0,0),byteArrayOf(1,0,0x80.toByte(),0)).forEach { b ->

@@ -36,6 +36,8 @@ pub enum ControlMessage {
     Ping(u64), // Nano-second timestamp
     Pong(u64),
     Disconnect,
+    // Appended tag 9: feature bitset; unknown bits are ignored.
+    Capabilities { features: u32 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -167,4 +169,11 @@ pub enum GestureKind {
 * **TS-1:** Thêm biến thể cuối `ControlMessage::HostTime { echo_ns: u64, host_us: u64 }` (sau `Reject`, đúng FR-4, không đổi `PROTO_VERSION`).
 * **TS-2:** Host trả lời mỗi `Ping(t)` bằng `Pong(t)` **rồi ngay sau đó** `HostTime { echo_ns: t, host_us: <đồng hồ monotonic host, cùng gốc với VideoPacket.pts_us> }`.
 * **TS-3:** Client ước lượng `offset_us = host_us − (t_send_us + t_recv_us)/2`, chỉ nhận mẫu có RTT nhỏ nhất trong cửa sổ 10 s gần nhất. Độ trễ một frame = `client_now_us_at_render + offset_us − pts_us`.
-* **TS-4:** Client cũ không biết `HostTime` thì phải bỏ qua an toàn (bộ giải mã Kotlin/Rust trả lỗi Decode cho tag lạ → client hiện tại coi là frame hỏng). Vì vậy **chỉ gửi HostTime khi client đã chứng minh hiểu nó**: MVP chấp nhận gửi luôn vì app và host phát hành cùng nhau; ghi chú để xử lý khi có tương thích ngược.
+* **TS-4:** Client hiện tại nhận `HostTime`; enum tag chưa biết được bỏ qua theo cơ chế tương thích WP-0.
+
+## 7. Capabilities — v1, Phase 2 WP-0
+
+* `Capabilities { features: u32 }` là biến thể cuối tag 9. Bit 0..7 lần lượt: `PEN_PRESSURE`, `POINTER_RELATIVE`, `GESTURE`, `KEYBOARD`, `TEXT`, `PEN_CONFIG`, `INPUT_TRUSTED`, `VIDEO_SUSPEND`. Bit lạ được bỏ qua.
+* Sau `Accept`, client gửi capabilities; host chỉ trả lời sau khi nhận message đó. Host không chủ động phát capability trước đó. `INPUT_TRUSTED` biểu thị quyền Accessibility trên macOS.
+* Frame có enum tag chưa biết nhưng độ dài hợp lệ được bỏ qua; lỗi framing/body khác vẫn giữ hành vi lỗi.
+* WP-0 chỉ bật `INPUT_TRUSTED` ở phía host; bit input khác chỉ được quảng bá khi chức năng tương ứng đã được triển khai.

@@ -48,6 +48,7 @@ mod tests {
             ControlMessage::Reject(RejectReason::InvalidHello),
             ControlMessage::Reject(RejectReason::Busy),
             ControlMessage::Reject(RejectReason::ScreenRecordingDenied),
+            ControlMessage::Capabilities { features: 0x45 },
         ];
         for c in controls {
             roundtrip(Packet::Control(c));
@@ -215,6 +216,10 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
             echo_ns: 0x1020_3040_5060_7080,
             host_us: 0x2010_2030_4050_6070,
         },
+    ));
+    controls.push((
+        "control_capabilities",
+        ControlMessage::Capabilities { features: 0x45 },
     ));
     let mut packets: Vec<(&'static str, Packet)> = controls
         .into_iter()

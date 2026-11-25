@@ -84,17 +84,25 @@ class WingpaneClientTest {
 
     @Test fun acceptMovesClientToActive() = runTest {
         val hello = CountDownLatch(1)
+        val capability = CountDownLatch(1)
         val srv = server { socket, _ ->
             assertIsHello(readPacket(socket))
             socket.getOutputStream().write(accept.encodeFrame())
+            // Release the test thread first: it must pump runTest (runCurrent) so the client can process Accept.
             hello.countDown()
-            try { readPacket(socket) } catch (_: Throwable) { }
+            // A Ping may race ahead of Capabilities; skip it.
+            var p = readPacket(socket)
+            while (p is Packet.Control && p.message is ControlMessage.Ping) p = readPacket(socket)
+            assertEquals(Packet.Control(ControlMessage.Capabilities(0u)), p)
+            capability.countDown()
+            try { while (true) readPacket(socket) } catch (_: Throwable) { }
         }
         val client = client(this, srv)
         try {
             runCurrent()
             await(hello)
             awaitClient(this, client) { client.state.value is ClientState.Active }
+            await(capability)
             advanceTimeBy(20)
             runCurrent()
             assertTrue("client state=${client.state.value}", client.state.value is ClientState.Active)
@@ -109,7 +117,11 @@ class WingpaneClientTest {
             readPacket(socket)
             accepted.await(5, TimeUnit.SECONDS)
             socket.getOutputStream().write(accept.encodeFrame())
-            repeat(2) { packets += readPacket(socket); received.countDown() }
+            // Ignore Capabilities / Ping control traffic; only Input packets are asserted.
+            while (packets.size < 2) {
+                val p = readPacket(socket)
+                if (p is Packet.Input) { packets += p; received.countDown() }
+            }
         }
         val client = client(this, srv)
         try {
@@ -191,7 +203,7 @@ class WingpaneClientTest {
             } else {
                 socket.getOutputStream().write(accept.encodeFrame())
                 secondHello.countDown()
-                try { readPacket(socket) } catch (_: Throwable) { }
+                try { while (true) readPacket(socket) } catch (_: Throwable) { }
             }
         }
         val client = client(this, srv)

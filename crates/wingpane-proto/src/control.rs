@@ -38,12 +38,18 @@ pub enum ControlMessage {
         echo_ns: u64,
         host_us: u64,
     },
+    /// Feature bits supported by this peer. Appended to preserve existing wire tags.
+    Capabilities {
+        features: u32,
+    },
 }
 
 /// Why the host declined a connection. Variant order is part of the wire format.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
-    VersionMismatch { host_version: u16 },
+    VersionMismatch {
+        host_version: u16,
+    },
     UnsupportedCodec,
     InvalidHello,
     Busy,
