@@ -24,6 +24,12 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
     private var _fps: Int = 0
     private var _isRunning: Bool = false
     private var _lastEvent: DaemonEvent?
+    private var _daemonInputTrusted: Bool?
+    private var _daemonScreenRecording: Bool?
+
+    /// Permissions as seen by the daemon process itself (nil until it reports).
+    public var daemonInputTrusted: Bool? { lock.lock(); defer { lock.unlock() }; return _daemonInputTrusted }
+    public var daemonScreenRecording: Bool? { lock.lock(); defer { lock.unlock() }; return _daemonScreenRecording }
 
     // While a menu is open, republishing makes SwiftUI rebuild it and closes open submenus.
     // Dedupe identical states and hold changes until tracking ends.
@@ -222,6 +228,12 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _fps = 0
             _iconState = .off
             _statusText = "Stopped"
+            _daemonInputTrusted = nil
+            _daemonScreenRecording = nil
+
+        case .permissions(let inputTrusted, let screenRecording):
+            _daemonInputTrusted = inputTrusted
+            _daemonScreenRecording = screenRecording
 
         case .unknown:
             break
@@ -241,7 +253,7 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
 
     private func notifyChange() {
         lock.lock()
-        let snapshot = "\(_statusText)|\(_iconState)|\(_devices)|\(String(describing: _currentDevice))|\(_isRunning)"
+        let snapshot = "\(_statusText)|\(_iconState)|\(_devices)|\(String(describing: _currentDevice))|\(_isRunning)|\(String(describing: _daemonInputTrusted))|\(String(describing: _daemonScreenRecording))"
         let changed = snapshot != lastSnapshot
         lastSnapshot = snapshot
         lock.unlock()

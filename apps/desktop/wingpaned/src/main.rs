@@ -318,6 +318,10 @@ enum StatusEvent {
     Mode {
         mode: Mode,
     },
+    Permissions {
+        input_trusted: bool,
+        screen_recording: bool,
+    },
     Stats {
         fps: u64,
         encode_p95_ms: f64,
@@ -393,6 +397,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if opts.status_json {
         emit_status(StatusEvent::Starting {
             version: env!("CARGO_PKG_VERSION").into(),
+        });
+        // Report the permissions of THIS process (macOS grants are per code identity) on every change.
+        tokio::spawn(async {
+            let mut last: Option<(bool, bool)> = None;
+            loop {
+                let now = unsafe { (wp_input_trusted(), wp_screen_capture_trusted()) };
+                if last != Some(now) {
+                    last = Some(now);
+                    emit_status(StatusEvent::Permissions { input_trusted: now.0, screen_recording: now.1 });
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
         });
     }
     #[cfg(unix)]

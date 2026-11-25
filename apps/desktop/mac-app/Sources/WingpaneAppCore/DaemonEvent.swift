@@ -68,6 +68,7 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
     case stats(fps: Int, encodeP95Ms: Double, writeP95Ms: Double, backlogDropped: Int)
     case clientDisconnected(reason: String)
     case error(message: String)
+    case permissions(inputTrusted: Bool, screenRecording: Bool)
     case stopped
     case unknown(String)
 
@@ -89,6 +90,8 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
         case writeP95Ms = "write_p95_ms"
         case backlogDropped = "backlog_dropped"
         case message
+        case inputTrusted = "input_trusted"
+        case screenRecording = "screen_recording"
     }
 
     public init(from decoder: Decoder) throws {
@@ -160,6 +163,12 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
             let message = try container.decode(String.self, forKey: .message)
             self = .error(message: message)
 
+        case "permissions":
+            self = .permissions(
+                inputTrusted: try container.decode(Bool.self, forKey: .inputTrusted),
+                screenRecording: try container.decode(Bool.self, forKey: .screenRecording)
+            )
+
         case "stopped":
             self = .stopped
 
@@ -208,6 +217,10 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
         case .error(let message):
             try container.encode("error", forKey: .event)
             try container.encode(message, forKey: .message)
+        case .permissions(let inputTrusted, let screenRecording):
+            try container.encode("permissions", forKey: .event)
+            try container.encode(inputTrusted, forKey: .inputTrusted)
+            try container.encode(screenRecording, forKey: .screenRecording)
         case .stopped:
             try container.encode("stopped", forKey: .event)
         case .unknown(let name):

@@ -102,16 +102,15 @@ struct WingpaneApp: App {
         }
 
         Menu("Permissions") {
-            Button("Screen Recording \(screenRecordingGranted ? "✓" : "✗")") {
-                _ = PermissionsChecker.requestScreenRecordingPermission()
-                NSWorkspace.shared.open(PermissionsChecker.screenRecordingSettingsURL)
-                refreshPermissions()
+            // Daemon-reported state wins: macOS grants are per process and the daemon does the injecting.
+            let screenOK = statusModel.daemonScreenRecording ?? screenRecordingGranted
+            let accessOK = statusModel.daemonInputTrusted ?? accessibilityGranted
+            Button("Screen Recording \(screenOK ? "✓" : "✗")") {
+                openSettingsOnce(PermissionsChecker.screenRecordingSettingsURL)
             }
 
-            Button("Accessibility \(accessibilityGranted ? "✓" : "✗")") {
-                _ = PermissionsChecker.hasAccessibilityPermission(prompt: true)
-                NSWorkspace.shared.open(PermissionsChecker.accessibilitySettingsURL)
-                refreshPermissions()
+            Button("Accessibility \(accessOK ? "✓" : "✗")") {
+                openSettingsOnce(PermissionsChecker.accessibilitySettingsURL)
             }
         }
 
@@ -145,6 +144,16 @@ struct WingpaneApp: App {
             return selected == device.serial
         }
         return statusModel.currentDevice?.serial == device.serial
+    }
+
+    @MainActor private static var lastSettingsOpen = Date.distantPast
+    private func openSettingsOnce(_ url: URL) {
+        // No system prompt (it re-opened Settings repeatedly); one window per click, debounced.
+        DispatchQueue.main.async {
+            guard Date().timeIntervalSince(Self.lastSettingsOpen) > 3 else { return }
+            Self.lastSettingsOpen = Date()
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func refreshPermissions() {
