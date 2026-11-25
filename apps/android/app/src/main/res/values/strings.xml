@@ -53,6 +53,7 @@
 
     <!-- Stream & HUD -->
     <string name="hud_connected">Connected</string>
+    <string name="hud_accessibility_missing">Mac chưa cấp Accessibility</string>
     <string name="hud_open_cd">Open stream controls</string>
     <string name="hud_close_cd">Close stream controls</string>
     <string name="hud_high_latency_format">%1$d ms · High latency</string>

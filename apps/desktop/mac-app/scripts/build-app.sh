@@ -12,6 +12,9 @@ cd "$PACKAGE_DIR"
 echo "▶ Building menu bar app…"
 swift build -c release
 
+echo "▶ Generating application icons…"
+swift "$SCRIPT_DIR/generate-icons.swift"
+
 BIN_DIR="$(swift build -c release --show-bin-path)"
 APP_BUNDLE="$PACKAGE_DIR/build/Wingpane.app"
 CONTENTS_DIR="$APP_BUNDLE/Contents"
@@ -30,6 +33,7 @@ if [ ! -x "$DAEMON_BIN" ]; then
 fi
 cp "$DAEMON_BIN" "$RESOURCES_DIR/wingpaned"
 chmod +x "$RESOURCES_DIR/wingpaned"
+cp "$SCRIPT_DIR/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -44,6 +48,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
     <string>Wingpane</string>
     <key>CFBundleIdentifier</key>
     <string>io.wingpane.mac</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

@@ -121,6 +121,18 @@ struct WingpaneApp: App {
 
         Divider()
 
+        Button("About Wingpane") {
+            let info = Bundle.main.infoDictionary
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.orderFrontStandardAboutPanel(options: [
+                .applicationName: "Wingpane",
+                .applicationVersion: info?["CFBundleShortVersionString"] as? String ?? "",
+                .version: info?["CFBundleVersion"] as? String ?? "",
+                .credits: NSAttributedString(string: "Turn your Android tablet into a Mac secondary display.\n\nhttps://github.com/lamnt9/wingpane"),
+                NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): info?["NSHumanReadableCopyright"] as? String ?? "Copyright © 2026 Wingpane. All rights reserved.",
+            ])
+        }
+
         Button("Quit Wingpane") {
             controller.stop()
             NSApplication.shared.terminate(nil)
