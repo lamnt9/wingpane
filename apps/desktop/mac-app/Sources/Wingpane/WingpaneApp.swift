@@ -127,7 +127,7 @@ struct WingpaneApp: App {
                 .applicationName: "Wingpane",
                 .applicationVersion: info?["CFBundleShortVersionString"] as? String ?? "",
                 .version: info?["CFBundleVersion"] as? String ?? "",
-                .credits: NSAttributedString(string: "Turn your Android tablet into a Mac secondary display.\n\nhttps://github.com/lamnt9/wingpane"),
+                .credits: NSAttributedString(string: Self.aboutText),
                 NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): info?["NSHumanReadableCopyright"] as? String ?? "Copyright © 2026 Wingpane. All rights reserved.",
             ])
         }
@@ -138,6 +138,19 @@ struct WingpaneApp: App {
         }
         .keyboardShortcut("q", modifiers: .command)
     }
+
+    private static let aboutText = """
+    Turn your Android tablet into a Mac secondary display, pen tablet and trackpad.
+    Biến tablet Android thành màn hình phụ, bảng vẽ và trackpad cho Mac.
+
+    How to use / Cách dùng
+    1. Plug in the tablet (USB debugging on), open Wingpane on it. / Cắm tablet (bật USB debugging), mở app Wingpane trên tablet.
+    2. Permissions menu: enable Screen Recording and Accessibility for Wingpane and wingpaned. / Menu Permissions: bật Screen Recording và Accessibility cho Wingpane và wingpaned.
+    3. Display: tablet is a second screen. Pen: graphics tablet. Trackpad: move, click, scroll, 3-finger swipes. Keyboard/Numpad/IME: type into the Mac. / Display: màn hình phụ. Pen: bảng vẽ. Trackpad: di chuột, click, cuộn, vuốt 3 ngón. Keyboard/Numpad/IME: gõ vào Mac.
+    4. Without Accessibility the Mac ignores pen, trackpad and keyboard. / Thiếu Accessibility thì Mac bỏ qua bút, trackpad và bàn phím.
+
+    https://github.com/lamnt9/wingpane
+    """
 
     private func isDeviceSelected(_ device: AdbDevice) -> Bool {
         if let selected = controller.selectedSerial {

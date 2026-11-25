@@ -1260,7 +1260,7 @@ private val aboutGuideVi = listOf(
 )
 
 @Composable
-private fun AboutDialog(onDismiss: () -> Unit) {
+fun AboutDialog(onDismiss: () -> Unit) {
     val colors = WingpaneTheme.colors
     val spacing = WingpaneTheme.spacing
     val radius = WingpaneTheme.radius

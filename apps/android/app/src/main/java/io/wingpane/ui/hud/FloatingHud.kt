@@ -156,6 +156,8 @@ fun StreamHudOverlay(
     val animationsEnabled = rememberAreAnimationsEnabled()
 
     var isExpanded by rememberSaveable { mutableStateOf(false) }
+    var showAbout by rememberSaveable { mutableStateOf(false) }
+    if (showAbout) io.wingpane.ui.screen.AboutDialog(onDismiss = { showAbout = false })
     var verticalFraction by rememberSaveable { mutableFloatStateOf(0.5f) }
     var pillInteractionTick by remember { mutableIntStateOf(0) }
     var panelInteractionTick by remember { mutableIntStateOf(0) }
@@ -359,6 +361,11 @@ fun StreamHudOverlay(
                         isExpanded = false
                         onDisconnect()
                     },
+                    onOpenAbout = {
+                        performWingpaneHaptic(context, view)
+                        isExpanded = false
+                        showAbout = true
+                    },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(
@@ -540,6 +547,7 @@ private fun ExpandedHudPanel(
     onPanelInteraction: () -> Unit,
     onClose: () -> Unit,
     onDisconnectConfirmed: () -> Unit,
+    onOpenAbout: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = WingpaneTheme.colors
@@ -777,6 +785,16 @@ private fun ExpandedHudPanel(
                 checked = showTouches,
                 onCheckedChange = onShowTouchesChange,
             )
+
+            Box(
+                modifier = Modifier.fillMaxWidth().heightIn(min = touch.minTarget)
+                    .clip(RoundedCornerShape(radius.card)).background(colors.surface2)
+                    .clickable(role = Role.Button) { onPanelInteraction(); onOpenAbout() }
+                    .padding(horizontal = spacing.md, vertical = spacing.sm),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(text = "About & guide", color = colors.text, style = WingpaneTheme.typography.body)
+            }
 
             // 5. Disconnect (danger): first tap turns row into "Tap again to disconnect" for 3s; no modal
             val disconnectLabel = if (isConfirmingDisconnect) {
