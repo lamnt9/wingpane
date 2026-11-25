@@ -152,12 +152,10 @@ struct WingpaneApp: App {
         DispatchQueue.main.async {
             guard Date().timeIntervalSince(Self.lastSettingsOpen) > 3 else { return }
             Self.lastSettingsOpen = Date()
-            // The daemon (not this app) injects input, so it must be listed itself.
+            // The daemon (not this app) injects input, so it must be listed itself. No system prompt
+            // (it kept reappearing): open Settings and reveal the file to drag into the list / add with "+".
             if let daemon = DaemonController.locateDaemonExecutable() {
-                let process = Process()
-                process.executableURL = daemon
-                process.arguments = ["--request-permissions"]
-                try? process.run()
+                NSWorkspace.shared.activateFileViewerSelecting([daemon])
             }
             NSWorkspace.shared.open(url)
         }
