@@ -84,4 +84,51 @@
     <string name="hud_disconnect_confirm">Tap again to disconnect</string>
     <string name="reconnecting_title">Reconnecting…</string>
     <string name="reconnecting_body">Connection interrupted. Attempting to restore video stream to your Mac (retrying every 1s)…</string>
+
+    <string name="settings_keep_hud">Luôn hiện HUD</string>
+    <string name="settings_keep_hud_desc">Tắt hiệu ứng mờ sau 3 giây không hoạt động trên thanh stream</string>
+    <string name="settings_three_finger_hud">Chạm 3 ngón để mở HUD</string>
+    <string name="settings_three_finger_hud_desc">Mặc định tắt để tránh xung đột với ứng dụng Mac</string>
+    <string name="about_guide">Giới thiệu và hướng dẫn</string>
+    <string name="about_title">Giới thiệu Wingpane</string>
+    <string name="about_version_description">Version %1$s
+Turn your Android tablet into a Mac secondary display, pen tablet and trackpad.
+https://github.com/lamnt9/wingpane</string>
+    <string name="about_display_title">Display</string>
+    <string name="about_display_body">Your tablet is a second Mac screen. Touch works like a touchscreen; S Pen draws with pressure and tilt.</string>
+    <string name="about_pen_title">Pen</string>
+    <string name="about_pen_body">The tablet becomes a graphics tablet for your main display. Hover moves the cursor, the side button right-clicks. Video is paused to save battery.</string>
+    <string name="about_trackpad_title">Trackpad</string>
+    <string name="about_trackpad_body">One finger moves the cursor, tap clicks, two-finger tap right-clicks, two fingers scroll, tap-and-drag moves things. Three-finger swipe: Mission Control, App Exposé, switch Space. Pinch zooms.</string>
+    <string name="about_keyboard_title">Keyboard</string>
+    <string name="about_keyboard_body">Switch to Keyboard / Numpad for a MacBook-style layout. Tap a modifier once for the next key, twice to lock. IME types Vietnamese through your tablet keyboard.</string>
+    <string name="about_mac_title">Mac setup</string>
+    <string name="about_mac_body">On the Mac enable Screen Recording and Accessibility for Wingpane and wingpaned (menu bar → Permissions). Without Accessibility the Mac ignores the pen, trackpad and keyboard.</string>
+    <string name="about_hud_title">HUD</string>
+    <string name="about_hud_body">Tap the pill at the top of the stream to switch modes, adjust pen pressure, palm rejection and disconnect.</string>
+    <string name="pressure_response">Pressure response</string>
+    <string name="pressure_soft">Soft</string>
+    <string name="pressure_linear">Linear</string>
+    <string name="pressure_hard">Hard</string>
+    <string name="pressure_main_display">Main display</string>
+    <string name="pressure_virtual_display">Virtual display</string>
+    <string name="panel_trackpad">Trackpad</string>
+    <string name="panel_keyboard">Keyboard</string>
+    <string name="panel_numpad">Numpad</string>
+    <string name="panel_ime">IME</string>
+    <string name="panel_done">Done</string>
+    <string name="reconnecting_short">Reconnecting</string>
+    <string name="reconnecting_seconds_format">%1$ds / 10s</string>
+    <string name="state_version_unknown">Your Mac uses a different protocol version, this app v1.</string>
+    <string name="state_disconnected_title">Disconnected</string>
+    <string name="state_disconnected_body">Tap Connect when you want to use your Mac display again.</string>
+    <string name="state_disconnected_action">Connect</string>
+    <string name="state_screen_recording_title">Your Mac needs Screen Recording permission.</string>
+    <string name="state_screen_recording_body">Open System Settings › Privacy &amp; Security › Screen &amp; System Audio Recording and enable Wingpane, then try again.</string>
+    <string name="state_screen_recording_badge">PERMISSION</string>
+    <string name="setup_diagram_cd">Tablet to Mac USB connection diagram</string>
+    <string name="connection_diagram_tablet">TABLET OLED</string>
+    <string name="connection_diagram_protocol">PROTOCOL v%1$d</string>
+    <string name="connection_diagram_protocol_unknown">PROTOCOL ?</string>
+
 </resources>

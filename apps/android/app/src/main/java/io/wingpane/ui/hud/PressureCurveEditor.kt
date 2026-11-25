@@ -19,6 +19,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import io.wingpane.R
 import io.wingpane.proto.PenTarget
 import io.wingpane.ui.theme.WingpaneTheme
 import kotlin.math.hypot
@@ -47,15 +49,15 @@ fun PressureCurveEditor(curve: List<Float>, target: PenTarget, onChange: (List<F
         modifier = Modifier.fillMaxWidth().background(colors.surface2, RoundedCornerShape(WingpaneTheme.radius.card)).padding(spacing.sm),
         verticalArrangement = Arrangement.spacedBy(spacing.xs),
     ) {
-        Text("Pressure response", color = colors.text)
+        Text(stringResource(R.string.pressure_response), color = colors.text)
         Row(horizontalArrangement = Arrangement.spacedBy(spacing.xs)) {
-            listOf("Soft", "Linear", "Hard").forEach { label ->
+            listOf(R.string.pressure_soft to "Soft", R.string.pressure_linear to "Linear", R.string.pressure_hard to "Hard").forEach { (labelId, key) ->
                 androidx.compose.foundation.layout.Box(
                     Modifier.weight(1f).heightIn(min = WingpaneTheme.touch.minTarget)
-                        .background(if (curve == PressureCurvePresets.named(label)) colors.primary else colors.bg, RoundedCornerShape(8.dp))
-                        .clickable { onChange(PressureCurvePresets.named(label), target) },
+                        .background(if (curve == PressureCurvePresets.named(key)) colors.primary else colors.bg, RoundedCornerShape(8.dp))
+                        .clickable { onChange(PressureCurvePresets.named(key), target) },
                     contentAlignment = androidx.compose.ui.Alignment.Center,
-                ) { Text(label, color = if (curve == PressureCurvePresets.named(label)) colors.onPrimary else colors.text) }
+                ) { Text(stringResource(labelId), color = if (curve == PressureCurvePresets.named(key)) colors.onPrimary else colors.text) }
             }
         }
         Canvas(
@@ -89,7 +91,7 @@ fun PressureCurveEditor(curve: List<Float>, target: PenTarget, onChange: (List<F
                         .background(if (candidate == target) colors.primary else colors.bg, RoundedCornerShape(8.dp))
                         .clickable { onChange(curve, candidate) },
                     contentAlignment = androidx.compose.ui.Alignment.Center,
-                ) { Text(if (candidate == PenTarget.MainDisplay) "Main display" else "Virtual display", color = if (candidate == target) colors.onPrimary else colors.text) }
+                ) { Text(stringResource(if (candidate == PenTarget.MainDisplay) R.string.pressure_main_display else R.string.pressure_virtual_display), color = if (candidate == target) colors.onPrimary else colors.text) }
             }
         }
     }

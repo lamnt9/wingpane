@@ -111,6 +111,8 @@ import kotlinx.coroutines.delay
  */
 @Composable
 fun ConnectionScreen(
+    language: String = io.wingpane.ui.util.AppLanguage.SYSTEM,
+    onLanguageChange: (String) -> Unit = {},
     uiModel: ScreenUiModel,
     keepHudVisible: Boolean,
     onKeepHudVisibleChange: (Boolean) -> Unit,
@@ -281,6 +283,8 @@ fun ConnectionScreen(
 
     if (showSettingsDialog) {
         ConnectionSettingsDialog(
+            language = language,
+            onLanguageChange = onLanguageChange,
             keepHudVisible = keepHudVisible,
             onKeepHudVisibleChange = {
                 performWingpaneHaptic(context, view)
@@ -399,12 +403,13 @@ private fun ConnectionDiagramCard(
     }
 
     val tabletLabel = if (uiModel.screenId == ScreenId.S5A_VERSION_MISMATCH) {
-        "PROTOCOL v${uiModel.appProtocolVersion}"
+        stringResource(R.string.connection_diagram_protocol, uiModel.appProtocolVersion)
     } else {
-        "TABLET OLED"
+        stringResource(R.string.connection_diagram_tablet)
     }
     val macScreenLabel = if (uiModel.screenId == ScreenId.S5A_VERSION_MISMATCH) {
-        uiModel.hostProtocolVersion?.let { "PROTOCOL v$it" } ?: "PROTOCOL ?"
+        uiModel.hostProtocolVersion?.let { stringResource(R.string.connection_diagram_protocol, it) }
+            ?: stringResource(R.string.connection_diagram_protocol_unknown)
     } else {
         null
     }
@@ -429,7 +434,7 @@ private fun ConnectionDiagramCard(
                 ) {
                     Image(
                         painter = painterResource(R.drawable.ic_diagram_tablet_mac),
-                        contentDescription = "Tablet to Mac USB connection diagram",
+                        contentDescription = stringResource(R.string.setup_diagram_cd),
                         modifier = Modifier.fillMaxSize(),
                     )
 
@@ -649,6 +654,7 @@ private fun ConnectionStateCard(
         label = "ConnectionStateTransition",
         modifier = modifier,
     ) { state ->
+        val displayState = localizedState(state)
         Surface(
             shape = RoundedCornerShape(radius.card),
             color = colors.surface1,
@@ -670,16 +676,16 @@ private fun ConnectionStateCard(
                 verticalArrangement = Arrangement.spacedBy(spacing.md),
             ) {
                 // Status badge chip (never color alone: always icon + text)
-                if (state.badgeLabel != null) {
+                if (displayState.badgeLabel != null) {
                     StatusBadgeChip(
-                        label = state.badgeLabel,
+                        label = displayState.badgeLabel,
                         severity = state.severity,
                     )
                 }
 
                 // Title (Outfit 28/22sp 600)
                 Text(
-                    text = state.title,
+                    text = displayState.title,
                     style = WingpaneTheme.typography.headingLg,
                     color = colors.text,
                     modifier = Modifier
@@ -694,7 +700,7 @@ private fun ConnectionStateCard(
                 // Body (Work Sans 16sp/1.5)
                 if (state.body != null) {
                     Text(
-                        text = state.body,
+                        text = displayState.body ?: "",
                         style = WingpaneTheme.typography.body,
                         color = colors.textMuted,
                         modifier = Modifier.testTag("StateCardBody"),
@@ -711,7 +717,7 @@ private fun ConnectionStateCard(
                     when (state.screenId) {
                         ScreenId.S1_WAITING -> {
                             WingpaneSecondaryButton(
-                                label = state.secondaryActionLabel ?: stringResource(R.string.action_setup_guide),
+                                label = displayState.secondaryActionLabel ?: stringResource(R.string.action_setup_guide),
                                 icon = Icons.Rounded.Info,
                                 onClick = onOpenSetupGuide,
                             )
@@ -719,7 +725,7 @@ private fun ConnectionStateCard(
 
                         ScreenId.S1_DISCONNECTED -> {
                             WingpanePrimaryButton(
-                                label = state.primaryActionLabel ?: "Connect",
+                                label = displayState.primaryActionLabel ?: stringResource(R.string.state_disconnected_action),
                                 icon = Icons.Rounded.Refresh,
                                 onClick = onTryAgain,
                                 fillMaxWidth = true,
@@ -728,7 +734,7 @@ private fun ConnectionStateCard(
 
                         ScreenId.S3_HANDSHAKING -> {
                             WingpaneSecondaryButton(
-                                label = state.primaryActionLabel ?: stringResource(R.string.action_cancel),
+                                label = displayState.primaryActionLabel ?: stringResource(R.string.action_cancel),
                                 icon = Icons.Rounded.Close,
                                 onClick = onCancelHandshake,
                             )
@@ -736,19 +742,19 @@ private fun ConnectionStateCard(
 
                         ScreenId.S5A_VERSION_MISMATCH -> {
                             WingpanePrimaryButton(
-                                label = state.primaryActionLabel ?: stringResource(R.string.action_update_app),
+                                label = displayState.primaryActionLabel ?: stringResource(R.string.action_update_app),
                                 icon = Icons.Rounded.KeyboardArrowDown,
                                 onClick = onUpdateApp,
                                 fillMaxWidth = true,
                             )
                             WingpaneSecondaryButton(
-                                label = state.secondaryActionLabel ?: stringResource(R.string.action_try_again),
+                                label = displayState.secondaryActionLabel ?: stringResource(R.string.action_try_again),
                                 icon = Icons.Rounded.Refresh,
                                 onClick = onTryAgain,
                                 fillMaxWidth = true,
                             )
                             WingpaneSecondaryButton(
-                                label = state.tertiaryActionLabel ?: stringResource(R.string.action_troubleshooting),
+                                label = displayState.tertiaryActionLabel ?: stringResource(R.string.action_troubleshooting),
                                 icon = Icons.Rounded.Info,
                                 onClick = onOpenSetupGuide,
                                 fillMaxWidth = true,
@@ -757,7 +763,7 @@ private fun ConnectionStateCard(
 
                         ScreenId.S5B_UNSUPPORTED_DEVICE -> {
                             WingpanePrimaryButton(
-                                label = state.primaryActionLabel ?: stringResource(R.string.action_troubleshooting),
+                                label = displayState.primaryActionLabel ?: stringResource(R.string.action_troubleshooting),
                                 icon = Icons.Rounded.Info,
                                 onClick = onOpenSetupGuide,
                                 fillMaxWidth = true,
@@ -766,7 +772,7 @@ private fun ConnectionStateCard(
 
                         ScreenId.S5C_BUSY -> {
                             WingpanePrimaryButton(
-                                label = state.primaryActionLabel ?: stringResource(R.string.action_try_again),
+                                label = displayState.primaryActionLabel ?: stringResource(R.string.action_try_again),
                                 icon = Icons.Rounded.Refresh,
                                 onClick = onTryAgain,
                                 fillMaxWidth = true,
@@ -776,14 +782,14 @@ private fun ConnectionStateCard(
                         ScreenId.S5D_HANDSHAKE_FAILED,
                         ScreenId.S5E_CONNECTION_LOST -> {
                             WingpanePrimaryButton(
-                                label = state.primaryActionLabel ?: stringResource(R.string.action_try_again),
+                                label = displayState.primaryActionLabel ?: stringResource(R.string.action_try_again),
                                 icon = Icons.Rounded.Refresh,
                                 onClick = onTryAgain,
                                 fillMaxWidth = true,
                             )
-                            if (state.secondaryActionLabel != null) {
+                            if (displayState.secondaryActionLabel != null) {
                                 WingpaneSecondaryButton(
-                                    label = state.secondaryActionLabel,
+                                    label = displayState.secondaryActionLabel,
                                     icon = Icons.Rounded.Info,
                                     onClick = onOpenSetupGuide,
                                     fillMaxWidth = true,
@@ -798,6 +804,46 @@ private fun ConnectionStateCard(
             }
         }
     }
+}
+
+@Composable
+private fun localizedState(state: ScreenUiModel): ScreenUiModel = when (state.screenId) {
+    ScreenId.S1_WAITING -> state.copy(
+        title = stringResource(R.string.s1_title), body = stringResource(R.string.s1_body),
+        secondaryActionLabel = stringResource(R.string.action_setup_guide),
+    )
+    ScreenId.S1_DISCONNECTED -> state.copy(
+        title = stringResource(R.string.state_disconnected_title), body = stringResource(R.string.state_disconnected_body),
+        primaryActionLabel = stringResource(R.string.state_disconnected_action),
+    )
+    ScreenId.S3_HANDSHAKING -> state.copy(title = stringResource(R.string.s3_title), primaryActionLabel = stringResource(R.string.action_cancel))
+    ScreenId.S5A_VERSION_MISMATCH -> state.copy(
+        title = stringResource(R.string.s5a_title),
+        body = state.hostProtocolVersion?.let { stringResource(R.string.s5a_body_format, it) }
+            ?: stringResource(R.string.state_version_unknown),
+        primaryActionLabel = stringResource(R.string.action_update_app), secondaryActionLabel = stringResource(R.string.action_try_again),
+        tertiaryActionLabel = stringResource(R.string.action_troubleshooting), badgeLabel = stringResource(R.string.s5a_badge),
+    )
+    ScreenId.S5B_UNSUPPORTED_DEVICE -> state.copy(
+        title = stringResource(R.string.s5b_title), primaryActionLabel = stringResource(R.string.action_troubleshooting),
+        badgeLabel = stringResource(R.string.s5b_badge),
+    )
+    ScreenId.S5C_BUSY -> state.copy(
+        title = stringResource(R.string.s5c_title), primaryActionLabel = stringResource(R.string.action_try_again), badgeLabel = stringResource(R.string.s5c_badge),
+    )
+    ScreenId.S5D_HANDSHAKE_FAILED -> if (state.title.startsWith("Your Mac needs Screen Recording")) state.copy(
+        title = stringResource(R.string.state_screen_recording_title), body = stringResource(R.string.state_screen_recording_body),
+        primaryActionLabel = stringResource(R.string.action_try_again), badgeLabel = stringResource(R.string.state_screen_recording_badge),
+    ) else state.copy(
+        title = stringResource(R.string.s5d_title), primaryActionLabel = stringResource(R.string.action_try_again),
+        secondaryActionLabel = stringResource(R.string.action_troubleshooting), badgeLabel = stringResource(R.string.s5d_badge),
+    )
+    ScreenId.S5E_CONNECTION_LOST -> state.copy(
+        title = stringResource(R.string.s5e_title), primaryActionLabel = stringResource(R.string.action_try_again),
+        secondaryActionLabel = stringResource(R.string.action_troubleshooting), badgeLabel = stringResource(R.string.s5e_badge),
+    )
+    ScreenId.STREAM_ACTIVE -> state.copy(title = stringResource(R.string.hud_connected), badgeLabel = stringResource(R.string.hud_connected))
+    ScreenId.STREAM_RECONNECTING -> state.copy(title = stringResource(R.string.reconnecting_title), badgeLabel = stringResource(R.string.reconnecting_title))
 }
 
 @Composable
@@ -941,6 +987,11 @@ fun SetupGuideBottomSheet(
     val radius = WingpaneTheme.radius
     val touch = WingpaneTheme.touch
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val guideSteps = listOf(
+        SetupGuideStep(1, stringResource(R.string.setup_step_1_title), stringResource(R.string.setup_step_1_body)),
+        SetupGuideStep(2, stringResource(R.string.setup_step_2_title), stringResource(R.string.setup_step_2_body)),
+        SetupGuideStep(3, stringResource(R.string.setup_step_3_title), stringResource(R.string.setup_step_3_body), "wingpane"),
+    )
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -968,13 +1019,13 @@ fun SetupGuideBottomSheet(
                     verticalArrangement = Arrangement.spacedBy(spacing.xs),
                 ) {
                     Text(
-                        text = model.title,
+                        text = stringResource(R.string.setup_guide_title),
                         style = WingpaneTheme.typography.headingMd,
                         color = colors.text,
                         modifier = Modifier.semantics { heading() },
                     )
                     Text(
-                        text = model.subtitle,
+                        text = stringResource(R.string.setup_guide_subtitle),
                         style = WingpaneTheme.typography.body,
                         color = colors.textMuted,
                     )
@@ -991,14 +1042,14 @@ fun SetupGuideBottomSheet(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = model.secondaryActionLabel,
+                        contentDescription = stringResource(R.string.action_done),
                         tint = colors.text,
                         modifier = Modifier.size(20.dp),
                     )
                 }
             }
 
-            model.steps.forEach { step ->
+            guideSteps.forEach { step ->
                 SetupStepCard(step = step)
             }
 
@@ -1010,12 +1061,12 @@ fun SetupGuideBottomSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 WingpaneSecondaryButton(
-                    label = model.secondaryActionLabel,
+                    label = stringResource(R.string.action_done),
                     icon = null,
                     onClick = onDismiss,
                 )
                 WingpanePrimaryButton(
-                    label = model.primaryActionLabel,
+                    label = stringResource(R.string.action_open_developer_options),
                     icon = Icons.Rounded.Settings,
                     onClick = onOpenDeveloperOptions,
                 )
@@ -1103,6 +1154,8 @@ private fun SetupStepCard(step: SetupGuideStep) {
 
 @Composable
 private fun ConnectionSettingsDialog(
+    language: String,
+    onLanguageChange: (String) -> Unit,
     keepHudVisible: Boolean,
     onKeepHudVisibleChange: (Boolean) -> Unit,
     threeFingerTapHud: Boolean,
@@ -1156,6 +1209,8 @@ private fun ConnectionSettingsDialog(
                     }
                 }
 
+                LanguageSwitch(language = language, onChange = onLanguageChange)
+
                 // Brief: Accessibility setting "Keep HUD visible" disables fading
                 Row(
                     modifier = Modifier
@@ -1167,12 +1222,12 @@ private fun ConnectionSettingsDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Keep HUD visible",
+                            text = stringResource(R.string.settings_keep_hud),
                             style = WingpaneTheme.typography.bodyStrong,
                             color = colors.text,
                         )
                         Text(
-                            text = "Disable 3s idle fading on the stream pill",
+                            text = stringResource(R.string.settings_keep_hud_desc),
                             style = WingpaneTheme.typography.caption,
                             color = colors.textMuted,
                         )
@@ -1201,12 +1256,12 @@ private fun ConnectionSettingsDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "3-finger tap opens HUD",
+                            text = stringResource(R.string.settings_three_finger_hud),
                             style = WingpaneTheme.typography.bodyStrong,
                             color = colors.text,
                         )
                         Text(
-                            text = "Off by default to avoid clashing with Mac apps",
+                            text = stringResource(R.string.settings_three_finger_hud_desc),
                             style = WingpaneTheme.typography.caption,
                             color = colors.textMuted,
                         )
@@ -1231,7 +1286,7 @@ private fun ConnectionSettingsDialog(
                     fillMaxWidth = true,
                 )
                 WingpaneSecondaryButton(
-                    label = "About & guide",
+                    label = stringResource(R.string.about_guide),
                     icon = Icons.Rounded.Info,
                     onClick = onOpenAbout,
                     fillMaxWidth = true,
@@ -1241,23 +1296,29 @@ private fun ConnectionSettingsDialog(
     }
 }
 
-private val aboutGuide = listOf(
-    "Display" to "Your tablet is a second Mac screen. Touch works like a touchscreen; S Pen draws with pressure and tilt.",
-    "Pen" to "The tablet becomes a graphics tablet for your main display. Hover moves the cursor, the side button right-clicks. Video is paused to save battery.",
-    "Trackpad" to "One finger moves the cursor, tap clicks, two-finger tap right-clicks, two fingers scroll, tap-and-drag moves things. Three-finger swipe: Mission Control, App Exposé, switch Space. Pinch zooms.",
-    "Keyboard" to "Switch to Keyboard / Numpad for a MacBook-style layout. Tap a modifier once for the next key, twice to lock. IME types Vietnamese through your tablet keyboard.",
-    "Mac setup" to "On the Mac enable Screen Recording and Accessibility for Wingpane and wingpaned (menu bar → Permissions). Without Accessibility the Mac ignores the pen, trackpad and keyboard.",
-    "HUD" to "Tap the pill at the top of the stream to switch modes, adjust pen pressure, palm rejection and disconnect.",
-)
-
-private val aboutGuideVi = listOf(
-    "Display" to "Tablet thành màn hình phụ của Mac. Chạm như màn hình cảm ứng; S Pen vẽ có lực nhấn và độ nghiêng.",
-    "Pen" to "Tablet thành bảng vẽ cho màn hình chính. Rê bút để di con trỏ, nút cạnh bút là chuột phải. Video tạm dừng để tiết kiệm pin.",
-    "Trackpad" to "Một ngón di con trỏ, chạm là click, chạm hai ngón là chuột phải, hai ngón trượt để cuộn, chạm rồi kéo để kéo thả. Ba ngón vuốt: Mission Control, App Exposé, chuyển Space. Chụm hai ngón để zoom.",
-    "Keyboard" to "Chuyển sang Keyboard / Numpad để có bàn phím kiểu MacBook. Bấm phím modifier một lần cho phím kế tiếp, hai lần để khoá. IME để gõ tiếng Việt bằng bàn phím của tablet.",
-    "Cài đặt trên Mac" to "Trên Mac bật Screen Recording và Accessibility cho Wingpane và wingpaned (menu trên thanh menu → Permissions). Thiếu Accessibility thì Mac bỏ qua bút, trackpad và bàn phím.",
-    "HUD" to "Chạm vào viên thuốc ở đầu màn hình stream để đổi chế độ, chỉnh lực bút, chống chạm nhầm lòng bàn tay và ngắt kết nối.",
-)
+/** English / Tiếng Việt selector (follows the system language when never chosen). */
+@Composable
+fun LanguageSwitch(language: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val colors = WingpaneTheme.colors
+    val spacing = WingpaneTheme.spacing
+    val radius = WingpaneTheme.radius
+    val effective = if (language == io.wingpane.ui.util.AppLanguage.SYSTEM) {
+        if (io.wingpane.ui.util.isVietnameseUi()) io.wingpane.ui.util.AppLanguage.VI else io.wingpane.ui.util.AppLanguage.EN
+    } else language
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
+        listOf(io.wingpane.ui.util.AppLanguage.EN to "English", io.wingpane.ui.util.AppLanguage.VI to "Tiếng Việt").forEach { (code, label) ->
+            val selected = effective == code
+            Box(
+                modifier = Modifier.weight(1f).heightIn(min = WingpaneTheme.touch.minTarget)
+                    .clip(RoundedCornerShape(radius.card))
+                    .background(if (selected) colors.primary else colors.surface2)
+                    .border(1.dp, if (selected) colors.primary else colors.border, RoundedCornerShape(radius.card))
+                    .clickable { onChange(code) },
+                contentAlignment = Alignment.Center,
+            ) { Text(label, style = WingpaneTheme.typography.bodyStrong, color = if (selected) colors.onPrimary else colors.text) }
+        }
+    }
+}
 
 @Composable
 fun AboutDialog(onDismiss: () -> Unit) {
@@ -1265,7 +1326,6 @@ fun AboutDialog(onDismiss: () -> Unit) {
     val spacing = WingpaneTheme.spacing
     val radius = WingpaneTheme.radius
     val context = LocalContext.current
-    var vietnamese by rememberSaveable { mutableStateOf(java.util.Locale.getDefault().language == "vi") }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: ""
     }
@@ -1285,16 +1345,21 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(spacing.md),
             ) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (vietnamese) "Giới thiệu Wingpane" else "About Wingpane", style = WingpaneTheme.typography.headingMd, color = colors.text)
-                    WingpaneSecondaryButton(label = if (vietnamese) "English" else "Tiếng Việt", icon = null, onClick = { vietnamese = !vietnamese })
+                    Text(stringResource(R.string.about_title), style = WingpaneTheme.typography.headingMd, color = colors.text)
                 }
                 Text(
-                    if (vietnamese) "Phiên bản $version\nBiến tablet Android thành màn hình phụ, bảng vẽ và trackpad cho Mac.\nhttps://github.com/lamnt9/wingpane"
-                    else "Version $version\nTurn your Android tablet into a Mac secondary display, pen tablet and trackpad.\nhttps://github.com/lamnt9/wingpane",
+                    stringResource(R.string.about_version_description, version),
                     style = WingpaneTheme.typography.caption,
                     color = colors.textMuted,
                 )
-                (if (vietnamese) aboutGuideVi else aboutGuide).forEach { (title, body) ->
+                listOf(
+                    stringResource(R.string.about_display_title) to stringResource(R.string.about_display_body),
+                    stringResource(R.string.about_pen_title) to stringResource(R.string.about_pen_body),
+                    stringResource(R.string.about_trackpad_title) to stringResource(R.string.about_trackpad_body),
+                    stringResource(R.string.about_keyboard_title) to stringResource(R.string.about_keyboard_body),
+                    stringResource(R.string.about_mac_title) to stringResource(R.string.about_mac_body),
+                    stringResource(R.string.about_hud_title) to stringResource(R.string.about_hud_body),
+                ).forEach { (title, body) ->
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(title, style = WingpaneTheme.typography.bodyStrong, color = colors.text)
                         Text(body, style = WingpaneTheme.typography.caption, color = colors.textMuted)

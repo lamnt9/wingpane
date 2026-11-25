@@ -115,6 +115,8 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
+            var language by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(io.wingpane.ui.util.AppLanguage.load(this@MainActivity)) }
+            io.wingpane.ui.util.LocalizedContent(language) {
             WingpaneTheme {
                 val uiModel = ClientStateMapper.map(clientState)
                 val hostFeatures by client.hostFeatures.collectAsState()
@@ -210,6 +212,8 @@ class MainActivity : ComponentActivity() {
                     }
                     if (uiModel.isStreamScreen) {
                         StreamHudOverlay(
+                            language = language,
+                            onLanguageChange = { language = it; io.wingpane.ui.util.AppLanguage.save(this@MainActivity, it) },
                             stats = stats,
                             bitrateKbps = if (uiModel.streamBitrateKbps > 0u) uiModel.streamBitrateKbps else lastBitrateKbps,
                             isReconnecting = uiModel.isReconnecting,
@@ -267,6 +271,8 @@ class MainActivity : ComponentActivity() {
                         )
                     } else {
                         ConnectionScreen(
+                            language = language,
+                            onLanguageChange = { language = it; io.wingpane.ui.util.AppLanguage.save(this@MainActivity, it) },
                             uiModel = uiModel,
                             keepHudVisible = keepHudVisible,
                             onKeepHudVisibleChange = { keepHudVisible = it },
@@ -283,6 +289,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
             }
         }
     }

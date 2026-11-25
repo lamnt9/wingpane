@@ -18,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import io.wingpane.R
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.layout.fillMaxSize
@@ -72,10 +74,10 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
         modTick++
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf("Trackpad", "Keyboard", "Numpad").forEach { name ->
-            Key(name, Modifier.weight(1f), selected = panel == name) { panel = name }
+        listOf("Trackpad" to R.string.panel_trackpad, "Keyboard" to R.string.panel_keyboard, "Numpad" to R.string.panel_numpad).forEach { (name, labelId) ->
+            Key(stringResource(labelId), Modifier.weight(1f), selected = panel == name) { panel = name }
         }
-        Key(if (imeOpen) "Done" else "IME", Modifier.weight(1f), selected = imeOpen) { imeOpen = !imeOpen }
+        Key(stringResource(if (imeOpen) R.string.panel_done else R.string.panel_ime), Modifier.weight(1f), selected = imeOpen) { imeOpen = !imeOpen }
     }
     SystemImeBridge(onEvents = onEvents, requestFocus = imeOpen)
     if (panel == "Keyboard") {

@@ -124,6 +124,8 @@ data class StreamTouchPoint(
  */
 @Composable
 fun StreamHudOverlay(
+    language: String = io.wingpane.ui.util.AppLanguage.SYSTEM,
+    onLanguageChange: (String) -> Unit = {},
     stats: VideoDecoder.Stats,
     bitrateKbps: UInt,
     isReconnecting: Boolean,
@@ -361,6 +363,8 @@ fun StreamHudOverlay(
                         isExpanded = false
                         onDisconnect()
                     },
+                    language = language,
+                    onLanguageChange = { panelInteractionTick++; onLanguageChange(it) },
                     onOpenAbout = {
                         performWingpaneHaptic(context, view)
                         isExpanded = false
@@ -548,6 +552,8 @@ private fun ExpandedHudPanel(
     onClose: () -> Unit,
     onDisconnectConfirmed: () -> Unit,
     onOpenAbout: () -> Unit = {},
+    language: String = io.wingpane.ui.util.AppLanguage.SYSTEM,
+    onLanguageChange: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = WingpaneTheme.colors
@@ -786,6 +792,7 @@ private fun ExpandedHudPanel(
                 onCheckedChange = onShowTouchesChange,
             )
 
+            io.wingpane.ui.screen.LanguageSwitch(language = language, onChange = onLanguageChange)
             Box(
                 modifier = Modifier.fillMaxWidth().heightIn(min = touch.minTarget)
                     .clip(RoundedCornerShape(radius.card)).background(colors.surface2)
@@ -793,7 +800,7 @@ private fun ExpandedHudPanel(
                     .padding(horizontal = spacing.md, vertical = spacing.sm),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                Text(text = "About & guide", color = colors.text, style = WingpaneTheme.typography.body)
+                Text(text = stringResource(R.string.about_guide), color = colors.text, style = WingpaneTheme.typography.body)
             }
 
             // 5. Disconnect (danger): first tap turns row into "Tap again to disconnect" for 3s; no modal
@@ -1182,12 +1189,12 @@ private fun ReconnectingScrimOverlay(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = "Reconnecting",
+                                text = stringResource(R.string.reconnecting_short),
                                 style = WingpaneTheme.typography.captionStrong,
                                 color = colors.primary,
                             )
                             Text(
-                                text = "${elapsedSeconds}s / 10s",
+                                text = stringResource(R.string.reconnecting_seconds_format, elapsedSeconds),
                                 style = WingpaneTheme.typography.captionStrong,
                                 color = colors.primary,
                             )
