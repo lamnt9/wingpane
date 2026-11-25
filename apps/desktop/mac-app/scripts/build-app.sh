@@ -13,7 +13,11 @@ echo "▶ Building menu bar app…"
 swift build -c release
 
 echo "▶ Generating application icons…"
-swift "$SCRIPT_DIR/generate-icons.swift"
+# Compile instead of `swift script.swift`: the interpreter crashes on Xcode 26.3.
+ICON_TOOL="$(mktemp -d)/generate-icons"
+swiftc -O "$SCRIPT_DIR/generate-icons.swift" -o "$ICON_TOOL"
+"$ICON_TOOL"
+rm -rf "$(dirname "$ICON_TOOL")"
 
 BIN_DIR="$(swift build -c release --show-bin-path)"
 APP_BUNDLE="$PACKAGE_DIR/build/Wingpane.app"

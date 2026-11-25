@@ -10,7 +10,8 @@ fi
 
 STDIN_PID=""
 if [ -n "$FAKE_DAEMON_STDIN_FILE" ]; then
-    /bin/cat > "$FAKE_DAEMON_STDIN_FILE" 2>/dev/null &
+    # Explicit <&0: without job control, a background job gets /dev/null as stdin.
+    /bin/cat <&0 > "$FAKE_DAEMON_STDIN_FILE" 2>/dev/null &
     STDIN_PID=$!
 fi
 
