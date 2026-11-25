@@ -8,6 +8,8 @@ use std::{
 };
 use tokio::sync::Notify;
 
+pub mod keymap_macos;
+
 #[derive(Debug, Clone)]
 pub struct EncodedFrame {
     pub data: Vec<u8>,
@@ -86,6 +88,20 @@ impl FrameQueue {
 
 pub fn shared_queue() -> Arc<FrameQueue> {
     Arc::new(FrameQueue::default())
+}
+
+/// Maps system gestures to the default macOS keyboard shortcuts. Modifier bits
+/// follow USB HID boot-keyboard order: Ctrl=bit 0, Cmd=bit 3.
+pub fn gesture_shortcut(gesture: wingpane_proto::GestureKind) -> Option<(u16, u8)> {
+    use wingpane_proto::GestureKind::*;
+    match gesture {
+        Swipe3Up => Some((0x52, 1)),
+        Swipe3Down => Some((0x51, 1)),
+        Swipe3Left => Some((0x50, 1)),
+        Swipe3Right => Some((0x4f, 1)),
+        PinchZoom(scale) => Some((if scale >= 1.0 { 0x2e } else { 0x2d }, 8)),
+        _ => None,
+    }
 }
 
 /// A common control surface for native and test capture sources.
@@ -191,25 +207,31 @@ impl<'a> InputRouter<'a> {
             } if self.mode == Mode::TrackpadKeyboard => {
                 self.sink.key(usb_hid_usage, is_down, modifiers)
             }
+            InputEvent::Gesture(gesture) if self.mode == Mode::TrackpadKeyboard => {
+                if let Some((usage, modifiers)) = gesture_shortcut(gesture) {
+                    key_tap(self.sink, usage, modifiers)
+                } else if gesture == wingpane_proto::GestureKind::Tap {
+                    self.sink.button(0, true);
+                    self.sink.button(0, false)
+                } else if gesture == wingpane_proto::GestureKind::TwoFingerTap {
+                    self.sink.button(1, true);
+                    self.sink.button(1, false)
+                } else {
+                    return false;
+                }
+            }
             InputEvent::MouseButton { button, is_down } if self.mode == Mode::TrackpadKeyboard => {
                 self.sink.button(button, is_down)
-            }
-            InputEvent::Gesture(wingpane_proto::GestureKind::Tap)
-                if self.mode == Mode::TrackpadKeyboard =>
-            {
-                self.sink.button(0, true);
-                self.sink.button(0, false)
-            }
-            InputEvent::Gesture(wingpane_proto::GestureKind::TwoFingerTap)
-                if self.mode == Mode::TrackpadKeyboard =>
-            {
-                self.sink.button(1, true);
-                self.sink.button(1, false)
             }
             _ => return false,
         }
         true
     }
+}
+
+fn key_tap(sink: &dyn InputSink, hid: u16, modifiers: u8) {
+    sink.key(hid, true, modifiers);
+    sink.key(hid, false, 0);
 }
 
 pub struct SessionResources {
@@ -275,6 +297,22 @@ pub fn handle_control(
         ControlMessage::Ping(ts) => Some(ControlMessage::Pong(ts)),
         ControlMessage::Disconnect => None,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod gesture_shortcut_tests {
+    use super::gesture_shortcut;
+    use wingpane_proto::GestureKind::*;
+    #[test]
+    fn default_macos_gesture_shortcuts_match_plan() {
+        assert_eq!(gesture_shortcut(Swipe3Up), Some((0x52, 1)));
+        assert_eq!(gesture_shortcut(Swipe3Down), Some((0x51, 1)));
+        assert_eq!(gesture_shortcut(Swipe3Left), Some((0x50, 1)));
+        assert_eq!(gesture_shortcut(Swipe3Right), Some((0x4f, 1)));
+        assert_eq!(gesture_shortcut(PinchZoom(1.15)), Some((0x2e, 8)));
+        assert_eq!(gesture_shortcut(PinchZoom(0.85)), Some((0x2d, 8)));
+        assert_eq!(gesture_shortcut(Tap), None);
     }
 }
 

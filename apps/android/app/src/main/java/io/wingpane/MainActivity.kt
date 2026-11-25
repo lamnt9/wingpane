@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
                 var lockAspectRatio by rememberSaveable { mutableStateOf(true) }
                 var showTouches by rememberSaveable { mutableStateOf(false) }
                 var palmLevel by rememberSaveable { mutableStateOf(palmFilter.currentLevel().name) }
-                val trackpadDetector = androidx.compose.runtime.remember { TrackpadGestureDetector(tapSlopPx = 8f * resources.displayMetrics.density) }
+                val trackpadDetector = androidx.compose.runtime.remember { TrackpadGestureDetector(tapSlopPx = 8f * resources.displayMetrics.density, threeFingerSwipePx = 60f * resources.displayMetrics.density) }
                 activeTrackpadDetector = trackpadDetector
 
                 // Brief: Stream forces sensorLandscape; connection screens support both tablet landscape & phone portrait.
@@ -177,7 +177,19 @@ class MainActivity : ComponentActivity() {
                             if (hostSupportsPen()) handleStylus(view, event, hover = event.actionMasked in setOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT)) else false
                         })
                     } else if (uiModel.isStreamScreen && mode == Mode.TrackpadKeyboard) {
-                        TrackpadScreen(detector = trackpadDetector, onEvents = { events -> events.forEach(client::sendInput) })
+                        TrackpadScreen(detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
+                            val allowed = when (event) {
+                                is InputEvent.Keyboard -> hostCapabilitiesReceived && (hostFeatures and (1 shl 3)) != 0
+                                is InputEvent.Gesture -> when (event.kind) {
+                                    io.wingpane.proto.GestureKind.Swipe3Up, io.wingpane.proto.GestureKind.Swipe3Down,
+                                    io.wingpane.proto.GestureKind.Swipe3Left, io.wingpane.proto.GestureKind.Swipe3Right,
+                                    is io.wingpane.proto.GestureKind.PinchZoom -> hostCapabilitiesReceived && (hostFeatures and (1 shl 2)) != 0
+                                    else -> true
+                                }
+                                else -> true
+                            }
+                            if (allowed) client.sendInput(event)
+                        } })
                     }
                     if (uiModel.isStreamScreen) {
                         StreamHudOverlay(

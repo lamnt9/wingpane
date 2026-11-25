@@ -223,7 +223,7 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
     ));
     controls.push((
         "control_capabilities",
-        ControlMessage::Capabilities { features: 0x45 },
+        ControlMessage::Capabilities { features: 0x4f },
     ));
     let mut packets: Vec<(&'static str, Packet)> = controls
         .into_iter()

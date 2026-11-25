@@ -76,6 +76,64 @@ final class PointerState: @unchecked Sendable {
     }
 }
 
+final class KeyboardState: @unchecked Sendable {
+    static let shared = KeyboardState()
+    private let lock = NSLock()
+    private var pressed: [UInt16: UInt8] = [:]
+    private var activeModifiers: UInt8 = 0
+    private let modifierKeycodes: [UInt16] = [0x3b, 0x38, 0x3a, 0x37, 0x3e, 0x3c, 0x3d, 0x36]
+    func post(_ keycode: UInt16, _ down: Bool, _ modifiers: UInt8) {
+        lock.lock(); defer { lock.unlock() }
+        guard AXIsProcessTrusted() else { return }
+        let effectiveModifiers = down ? modifiers : (pressed[keycode] ?? modifiers)
+        syncModifiers(effectiveModifiers)
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keycode), keyDown: down) else { return }
+        var flags: CGEventFlags = []
+        if effectiveModifiers & 0x11 != 0 { flags.insert(.maskControl) }
+        if effectiveModifiers & 0x22 != 0 { flags.insert(.maskShift) }
+        if effectiveModifiers & 0x44 != 0 { flags.insert(.maskAlternate) }
+        if effectiveModifiers & 0x88 != 0 { flags.insert(.maskCommand) }
+        event.flags = flags
+        event.post(tap: .cghidEventTap)
+        if down {
+            pressed[keycode] = effectiveModifiers
+        } else {
+            pressed.removeValue(forKey: keycode)
+            syncModifiers(modifiers)
+        }
+    }
+    func releaseAll() {
+        lock.lock(); defer { lock.unlock() }
+        for (key, modifiers) in pressed.sorted(by: { $0.key < $1.key }) {
+            if let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(key), keyDown: false) {
+                var flags: CGEventFlags=[]
+                if modifiers & 1 != 0 { flags.insert(.maskControl) }; if modifiers & 2 != 0 { flags.insert(.maskShift) }
+                if modifiers & 4 != 0 { flags.insert(.maskAlternate) }; if modifiers & 8 != 0 { flags.insert(.maskCommand) }
+                event.flags=flags; event.post(tap: .cghidEventTap)
+            }
+        }
+        pressed.removeAll()
+        syncModifiers(0)
+    }
+    private func syncModifiers(_ next: UInt8) {
+        let masks: [UInt8] = [1, 2, 4, 8, 16, 32, 64, 128]
+        for index in masks.indices where (activeModifiers & masks[index] != 0) != (next & masks[index] != 0) {
+            let isDown = next & masks[index] != 0
+            if let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(modifierKeycodes[index]), keyDown: isDown) {
+                event.type = .flagsChanged
+                var flags: CGEventFlags = []
+                if next & 0x11 != 0 { flags.insert(.maskControl) }
+                if next & 0x22 != 0 { flags.insert(.maskShift) }
+                if next & 0x44 != 0 { flags.insert(.maskAlternate) }
+                if next & 0x88 != 0 { flags.insert(.maskCommand) }
+                event.flags = flags
+                event.post(tap: .cghidEventTap)
+            }
+        }
+        activeModifiers = next
+    }
+}
+
 /// Posts tablet-point events to the virtual display. The same stable device ID is
 /// used for proximity and point events so drawing apps can associate the samples.
 final class PenState: @unchecked Sendable {

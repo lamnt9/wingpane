@@ -59,6 +59,12 @@ public func wp_host_time_us() -> UInt64 {
 public func wp_input_release_all() {
     PointerState.shared.releaseAll()
     PenState.shared.releaseAll()
+    KeyboardState.shared.releaseAll()
+}
+
+@_cdecl("wp_input_key")
+public func wp_input_key(_ keycode: UInt16, _ down: Bool, _ modifiers: UInt8) {
+    KeyboardState.shared.post(keycode, down, modifiers)
 }
 
 @_cdecl("wp_input_pointer")

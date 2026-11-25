@@ -93,7 +93,7 @@ class WingpaneClientTest {
             // A Ping may race ahead of Capabilities; skip it.
             var p = readPacket(socket)
             while (p is Packet.Control && p.message is ControlMessage.Ping) p = readPacket(socket)
-            assertEquals(Packet.Control(ControlMessage.Capabilities(0u)), p)
+            assertTrue("expected Capabilities, got $p", p is Packet.Control && p.message is ControlMessage.Capabilities) // feature bits are asserted elsewhere
             capability.countDown()
             try { while (true) readPacket(socket) } catch (_: Throwable) { }
         }

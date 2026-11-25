@@ -252,7 +252,7 @@ class WingpaneClient(
                                         mutableHostFeatures.value = 0
                                         mutableHostCapabilitiesReceived.value = false
                                         reduce(ConnectionStateMachine.Event.AcceptReceived(message))
-                                        send(thisSocket, Packet.Control(ControlMessage.Capabilities(0u)))
+                                        send(thisSocket, Packet.Control(ControlMessage.Capabilities((1u shl 1) or (1u shl 2) or (1u shl 3))))
                                     }
                                     is ControlMessage.Reject -> {
                                         reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))

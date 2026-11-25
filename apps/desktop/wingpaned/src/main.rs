@@ -131,6 +131,7 @@ unsafe extern "C" {
     fn wp_input_relative(dx: f64, dy: f64);
     fn wp_input_button(button: u8, down: bool);
     fn wp_input_scroll(dx: f64, dy: f64);
+    fn wp_input_key(keycode: u16, down: bool, modifiers: u8);
     fn wp_input_release_all();
     fn wp_input_trusted() -> bool;
     fn wp_screen_capture_trusted() -> bool;
@@ -159,6 +160,11 @@ impl Drop for DisconnectLog {
 }
 struct NativeInputSink(u32);
 const FEATURE_PEN_PRESSURE: u32 = 1 << 0;
+const FEATURE_POINTER_RELATIVE: u32 = 1 << 1;
+const FEATURE_GESTURE: u32 = 1 << 2;
+const FEATURE_KEYBOARD: u32 = 1 << 3;
+const HOST_INPUT_FEATURES: u32 =
+    FEATURE_PEN_PRESSURE | FEATURE_POINTER_RELATIVE | FEATURE_GESTURE | FEATURE_KEYBOARD;
 impl InputSink for NativeInputSink {
     fn pointer(&self, x: f32, y: f32, phase: TouchPhase) {
         unsafe { wp_input_pointer(self.0, f64::from(x), f64::from(y), phase as u8) };
@@ -224,6 +230,11 @@ impl InputSink for NativeInputSink {
     fn scroll(&self, dx: f32, dy: f32) {
         unsafe {
             wp_input_scroll(f64::from(dx), f64::from(dy));
+        }
+    }
+    fn key(&self, hid: u16, down: bool, mods: u8) {
+        if let Some(keycode) = wingpaned::keymap_macos::mac_keycode(hid) {
+            unsafe { wp_input_key(keycode, down, mods) }
         }
     }
 }
@@ -946,9 +957,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                     ControlMessage::Capabilities { .. } => {
                         client_capabilities_seen = true;
                         ControlMessage::Capabilities {
-                            features: FEATURE_PEN_PRESSURE
-                                | (1 << 1)
-                                | if input_trusted { 1 << 6 } else { 0 },
+                            features: HOST_INPUT_FEATURES | if input_trusted { 1 << 6 } else { 0 },
                         }
                     }
                     other => other,
@@ -957,7 +966,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                     resources.capture.as_ref(),
                     message,
                     ffi::host_time_us(),
-                    FEATURE_PEN_PRESSURE | (1 << 1) | if input_trusted { 1 << 6 } else { 0 },
+                    HOST_INPUT_FEATURES | if input_trusted { 1 << 6 } else { 0 },
                 ) {
                     if control_tx.send(Packet::Control(reply)).is_err() {
                         break;
@@ -976,9 +985,8 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                             });
                         }
                         if client_capabilities_seen {
-                            let features = FEATURE_PEN_PRESSURE
-                                | (1 << 1)
-                                | if input_trusted { 1 << 6 } else { 0 };
+                            let features =
+                                HOST_INPUT_FEATURES | if input_trusted { 1 << 6 } else { 0 };
                             let _ = control_tx
                                 .send(Packet::Control(ControlMessage::Capabilities { features }));
                         }

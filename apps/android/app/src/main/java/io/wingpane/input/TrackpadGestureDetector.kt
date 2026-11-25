@@ -2,10 +2,9 @@ package io.wingpane.input
 
 import io.wingpane.proto.InputEvent
 import kotlin.math.hypot
-import kotlin.math.min
 
 /** Pure pointer state machine. Coordinates and scroll deltas are pixels; callers supply monotonic ms. */
-class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSlopPx: Float = 8f) {
+class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSlopPx: Float = 8f, private val threeFingerSwipePx: Float = 60f) {
     data class PointerSample(val id: Int, val x: Float, val y: Float)
     enum class Action { Down, Move, Up, Cancel }
     private var startAt = 0L
@@ -18,6 +17,8 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
     private var dragging = false
     private var scrollVelocityX = 0f; private var scrollVelocityY = 0f
     private var inertiaUntil = 0L
+    private var gestureBaseDistance = 0f
+    private var gestureSent = false
 
     private fun centroidX(p: List<PointerSample>) = p.map { it.x }.average().toFloat()
     private fun centroidY(p: List<PointerSample>) = p.map { it.y }.average().toFloat()
@@ -29,12 +30,15 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
                 startAt=nowMs; lastAt=nowMs; count=pointers.size; startCount=pointers.size
                 startX=centroidX(pointers); startY=centroidY(pointers); lastX=startX; lastY=startY
                 moved=false; dragging=false; inertiaUntil=0
+                gestureBaseDistance=distance(pointers); gestureSent=false
             }
             Action.Move -> if (pointers.isNotEmpty()) {
                 val cx=centroidX(pointers); val cy=centroidY(pointers)
                 if (pointers.size != count) {
                     // A finger landed or lifted: the centroid jumps, which is not finger motion.
                     count=pointers.size; startCount=maxOf(startCount,count)
+                    if (count == 3) { startX=cx; startY=cy; gestureSent=false }
+                    if (count == 2) { gestureBaseDistance=distance(pointers); gestureSent=false }
                     startX=cx; startY=cy; lastX=cx; lastY=cy; lastAt=nowMs
                     return out
                 }
@@ -42,6 +46,20 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
                 val dt=(nowMs-lastAt).coerceAtLeast(1); val dist=hypot(cx-startX,cy-startY)
                 if (dist > tapSlopPx) moved=true
                 when {
+                    pointers.size == 3 -> {
+                        val ddx=cx-startX; val ddy=cy-startY
+                        if (!gestureSent && maxOf(kotlin.math.abs(ddx),kotlin.math.abs(ddy)) >= threeFingerSwipePx) {
+                            val kind = if (kotlin.math.abs(ddy) > kotlin.math.abs(ddx)) if (ddy < 0) io.wingpane.proto.GestureKind.Swipe3Up else io.wingpane.proto.GestureKind.Swipe3Down else if (ddx < 0) io.wingpane.proto.GestureKind.Swipe3Left else io.wingpane.proto.GestureKind.Swipe3Right
+                            out += InputEvent.Gesture(kind); gestureSent=true
+                        }
+                    }
+                    pointers.size == 2 -> {
+                        val d=distance(pointers)
+                        if (gestureBaseDistance > 0 && !gestureSent && kotlin.math.abs(d / gestureBaseDistance - 1f) >= PINCH_STEP) {
+                            out += InputEvent.Gesture(io.wingpane.proto.GestureKind.PinchZoom(if (d > gestureBaseDistance) 1.15f else 0.85f)); gestureBaseDistance=d; gestureSent=false
+                        } else if (!moved) { /* wait for pinch threshold before scrolling */ }
+                        else { out += InputEvent.Scroll(-dx,-dy); scrollVelocityX=-dx*1000f/dt; scrollVelocityY=-dy*1000f/dt }
+                    }
                     pointers.size >= 2 -> if (moved) {
                         out += InputEvent.Scroll(-dx,-dy)
                         scrollVelocityX = -dx*1000f/dt; scrollVelocityY = -dy*1000f/dt
@@ -58,11 +76,11 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
             }
             Action.Up -> {
                 if (dragging) out += InputEvent.MouseButton(0u,false)
-                else if (!moved && nowMs-startAt <= TAP_MS) {
-                    if (startCount >= 2) { out += InputEvent.MouseButton(1u,true); out += InputEvent.MouseButton(1u,false) }
+                else if (!moved && nowMs-startAt <= TAP_MS && startCount < 3) {
+                    if (startCount == 2) { out += InputEvent.MouseButton(1u,true); out += InputEvent.MouseButton(1u,false) }
                     else out += InputEvent.Gesture(io.wingpane.proto.GestureKind.Tap)
                 }
-                if (startCount >= 2 && moved) inertiaUntil=nowMs+INERTIA_MS
+                if (startCount == 2 && moved) inertiaUntil=nowMs+INERTIA_MS
                 dragging=false; count=0
             }
             Action.Cancel -> { if (dragging) out += InputEvent.MouseButton(0u,false); dragging=false; inertiaUntil=0; count=0 }
@@ -75,5 +93,6 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
         val decay=remaining*0.12f
         return listOf(InputEvent.Scroll(scrollVelocityX*decay,scrollVelocityY*decay))
     }
-    companion object { const val TAP_MS=180L; const val TAP_SLOP_DP=8f; const val INERTIA_MS=325L }
+    private fun distance(p: List<PointerSample>): Float = if (p.size < 2) 0f else hypot(p[0].x-p[1].x,p[0].y-p[1].y)
+    companion object { const val TAP_MS=180L; const val TAP_SLOP_DP=8f; const val INERTIA_MS=325L; const val PINCH_STEP=0.15f }
 }
