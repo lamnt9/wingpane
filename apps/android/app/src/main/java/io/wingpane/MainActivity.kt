@@ -196,6 +196,7 @@ class MainActivity : ComponentActivity() {
                         TrackpadScreen(detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
                             val allowed = when (event) {
                                 is InputEvent.Keyboard -> hostCapabilitiesReceived && (hostFeatures and (1 shl 3)) != 0
+                                is InputEvent.Text -> hostCapabilitiesReceived && (hostFeatures and (1 shl 4)) != 0
                                 is InputEvent.Gesture -> when (event.kind) {
                                     io.wingpane.proto.GestureKind.Swipe3Up, io.wingpane.proto.GestureKind.Swipe3Down,
                                     io.wingpane.proto.GestureKind.Swipe3Left, io.wingpane.proto.GestureKind.Swipe3Right,

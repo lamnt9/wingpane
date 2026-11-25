@@ -67,6 +67,24 @@ public func wp_input_key(_ keycode: UInt16, _ down: Bool, _ modifiers: UInt8) {
     KeyboardState.shared.post(keycode, down, modifiers)
 }
 
+@_cdecl("wp_input_text")
+public func wp_input_text(_ units: UnsafePointer<UInt16>?, _ count: Int) {
+    guard let units, count > 0, count <= 20 else { return }
+    let slice = UnsafeBufferPointer(start: units, count: count)
+    if count > 1 {
+        for index in 0..<(count - 1) where (0xD800...0xDBFF).contains(slice[index]) {
+            guard (0xDC00...0xDFFF).contains(slice[index + 1]) else { return }
+        }
+    }
+    if (0xD800...0xDBFF).contains(slice[count - 1]) { return }
+    guard AXIsProcessTrusted() else { return }
+    guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+          let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else { return }
+    down.keyboardSetUnicodeString(stringLength: count, unicodeString: units)
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+}
+
 @_cdecl("wp_input_pointer")
 public func wp_input_pointer(_ displayID: UInt32, _ x: Double, _ y: Double, _ phase: UInt8) {
     PointerState.shared.post(displayID: displayID, x: x, y: y, phase: phase)

@@ -1,5 +1,5 @@
 //! Stream framing and packet envelope.
-use crate::{ControlMessage, InputPacket};
+use crate::{ControlMessage, InputEvent, InputPacket};
 use alloc::vec::Vec;
 use core::fmt;
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,9 @@ impl fmt::Display for FrameError {
 }
 
 pub fn encode_frame(p: &Packet, out: &mut Vec<u8>) -> Result<(), FrameError> {
+    if matches!(p, Packet::Input(InputPacket { event: InputEvent::Text(text), .. }) if text.len() > 256) {
+        return Err(FrameError::Encode);
+    }
     let mut body = Vec::new();
     body = postcard::to_extend(p, body).map_err(|_| FrameError::Encode)?;
     let len = u32::try_from(body.len()).map_err(|_| FrameError::Encode)?;
@@ -131,7 +134,15 @@ impl FrameDecoder {
             self.bytes.drain(..self.cursor);
             self.cursor = 0;
         }
-        decoded.map(Some)
+        decoded
+            .and_then(|packet| {
+                if matches!(&packet, Packet::Input(InputPacket { event: InputEvent::Text(text), .. }) if text.len() > 256) {
+                    Err(FrameError::Decode)
+                } else {
+                    Ok(packet)
+                }
+            })
+            .map(Some)
     }
 }
 
@@ -164,7 +175,7 @@ fn has_unknown_tag(body: &[u8]) -> bool {
             if varint(body, &mut at).is_none() || varint(body, &mut at).is_none() {
                 return false;
             }
-            varint(body, &mut at).is_some_and(|tag| tag > 5)
+            varint(body, &mut at).is_some_and(|tag| tag > 7)
         }
         _ => true,
     }

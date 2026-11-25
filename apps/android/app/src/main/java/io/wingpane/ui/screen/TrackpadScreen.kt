@@ -38,6 +38,7 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
     val context = LocalContext.current
     val view = LocalView.current
     var panel by remember { mutableStateOf("Trackpad") }
+    var imeOpen by remember { mutableStateOf(false) }
     val keyboard = remember { KeyboardState() }
     Column(modifier.fillMaxSize().background(WingpaneTheme.colors.bg)) {
     Box(Modifier.fillMaxWidth().weight(1f).pointerInput(detector) {
@@ -65,7 +66,9 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
     })
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
         listOf("Trackpad", "Keyboard", "Numpad").forEach { name -> Button(onClick = { panel=name }) { Text(name) } }
+        Button(onClick = { imeOpen = !imeOpen }) { Text(if (imeOpen) "Done" else "IME") }
     }
+    SystemImeBridge(onEvents = onEvents, requestFocus = imeOpen)
     if (panel != "Trackpad") {
         val rows = if(panel=="Keyboard") listOf("1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM") else listOf("789/", "456*", "123-", "0.=+", "↵   ")
         rows.forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.SpaceEvenly) {

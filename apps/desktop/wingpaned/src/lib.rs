@@ -248,6 +248,9 @@ impl<'a> InputRouter<'a> {
             InputEvent::MouseButton { button, is_down } if self.mode == Mode::TrackpadKeyboard => {
                 self.sink.button(button, is_down)
             }
+            InputEvent::Text(text) if self.mode == Mode::TrackpadKeyboard && text.len() <= 256 => {
+                self.sink.text(&text)
+            }
             _ => return false,
         }
         true
@@ -305,6 +308,7 @@ pub fn handle_input(sink: &dyn InputSink, packet: wingpane_proto::InputPacket) -
             is_down,
             modifiers,
         } => sink.key(usb_hid_usage, is_down, modifiers),
+        InputEvent::Text(_) => return false,
     }
     true
 }
@@ -338,6 +342,29 @@ mod gesture_shortcut_tests {
         assert_eq!(gesture_shortcut(PinchZoom(1.15)), Some((0x2e, 8)));
         assert_eq!(gesture_shortcut(PinchZoom(0.85)), Some((0x2d, 8)));
         assert_eq!(gesture_shortcut(Tap), None);
+    }
+}
+
+#[cfg(test)]
+mod system_text_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct TextSink(Mutex<Vec<String>>);
+    impl InputSink for TextSink {
+        fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {}
+        fn release_all(&self) {}
+        fn text(&self, text: &str) { self.0.lock().unwrap().push(text.to_owned()); }
+    }
+
+    #[test]
+    fn trackpad_router_forwards_committed_text_and_rejects_over_limit() {
+        let mut sink = TextSink(Mutex::new(Vec::new()));
+        let router = InputRouter::new(wingpane_proto::Mode::TrackpadKeyboard, &mut sink);
+        let packet = |text: String| wingpane_proto::InputPacket { seq: 1, ts_us: 1, event: wingpane_proto::InputEvent::Text(text) };
+        assert!(router.handle_input(packet("Tiếng Việt 😀".to_owned())));
+        assert!(!router.handle_input(packet("x".repeat(257))));
+        assert_eq!(*sink.0.lock().unwrap(), ["Tiếng Việt 😀"]);
     }
 }
 

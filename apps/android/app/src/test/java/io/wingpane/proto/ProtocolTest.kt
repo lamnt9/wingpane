@@ -34,6 +34,7 @@ class ProtocolTest {
             "input_gesture" to Packet.Input(InputPacket(base,ts,InputEvent.Gesture(GestureKind.PinchZoom(1.25f)))),
             "input_keyboard" to Packet.Input(InputPacket(base,ts,InputEvent.Keyboard(0x1234u,true,5u))),
             "input_mouse_button" to Packet.Input(InputPacket(base,ts,InputEvent.MouseButton(0u,true))),
+            "input_text" to Packet.Input(InputPacket(base,ts,InputEvent.Text("Tiếng Việt 😀"))),
         )
     }
 
@@ -66,6 +67,12 @@ class ProtocolTest {
         assertEquals(Packet.Control(ControlMessage.Ping(42uL)), decoder.next())
         assertEquals(1L, decoder.skippedFrames)
         assertNull(decoder.next())
+    }
+    @Test fun textPayloadIsLimitedTo256Utf8Bytes() {
+        try {
+            Packet.Input(InputPacket(0u, 0uL, InputEvent.Text("é".repeat(129)))).encodeFrame()
+            fail("expected FrameException")
+        } catch (_: FrameException) {}
     }
     @Test fun rejectsEmptyAndOversizedBeforeBodyAllocation() {
         listOf(byteArrayOf(0,0,0,0),byteArrayOf(1,0,0x80.toByte(),0)).forEach { b ->

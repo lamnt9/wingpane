@@ -40,6 +40,8 @@ pub enum InputEvent {
         button: u8,
         is_down: bool,
     },
+    /// Committed UTF-8 text; appended as input tag 7 (maximum 256 UTF-8 bytes).
+    Text(alloc::string::String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

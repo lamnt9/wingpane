@@ -31,6 +31,7 @@ sealed interface InputEvent {
     data class Gesture(val kind: GestureKind) : InputEvent
     data class Keyboard(val usbHidUsage: UShort, val isDown: Boolean, val modifiers: UByte) : InputEvent
     data class MouseButton(val button: UByte, val isDown: Boolean) : InputEvent
+    data class Text(val text: String) : InputEvent
 }
 data class InputPacket(val seq: UInt, val tsUs: ULong, val event: InputEvent)
 data class VideoPacket(val frameSeq: UInt, val ptsUs: ULong, val isKeyframe: Boolean, val payload: ByteArray) {
@@ -116,6 +117,7 @@ private object Codec {
         is InputEvent.Gesture->{w.varint(4u);gesture(w,e.kind)}
         is InputEvent.Keyboard->{w.varint(5u);w.varint(e.usbHidUsage.toULong());w.bool(e.isDown);w.u8(e.modifiers)}
         is InputEvent.MouseButton->{w.varint(6u);w.u8(e.button);w.bool(e.isDown)}
+        is InputEvent.Text->{val bytes=e.text.toByteArray(Charsets.UTF_8);if(bytes.size>256)throw FrameException("text exceeds 256 UTF-8 bytes");w.varint(7u);w.string(e.text)}
     }}
     private fun gesture(w:Writer,g:GestureKind){val i=when(g){GestureKind.Tap->0;GestureKind.TwoFingerTap->1;GestureKind.DoubleTapDrag->2;GestureKind.Swipe3Up->3;GestureKind.Swipe3Down->4;GestureKind.Swipe3Left->5;GestureKind.Swipe3Right->6;is GestureKind.PinchZoom->7};w.varint(i.toULong());if(g is GestureKind.PinchZoom)w.float(g.scale)}
     fun decode(b:ByteArray):Packet {
@@ -135,13 +137,14 @@ private object Codec {
         9->ControlMessage.Capabilities(r.varint().toUInt())
         else->ControlMessage.PenConfig(List(4){r.float()},PenTarget.entries[r.enum(0,1)])
     }
-    private fun decodeInput(r:Reader):InputPacket {val seq=r.varint().toUInt();val ts=r.varint();val e=when(r.enum(0,6)){
+    private fun decodeInput(r:Reader):InputPacket {val seq=r.varint().toUInt();val ts=r.varint();val e=when(r.enum(0,7)){
         0->InputEvent.Pen(r.float(),r.float(),r.float(),r.byte().toByte(),r.byte().toByte(),r.bool(),r.bool(),r.byte().toUByte(),r.varint())
         1->InputEvent.Touch(r.byte().toUByte(),r.float(),r.float(),TouchPhase.entries[r.enum(0,3)])
         2->InputEvent.PointerDelta(r.float(),r.float());3->InputEvent.Scroll(r.float(),r.float())
         4->{val tag=r.enum(0,7);InputEvent.Gesture(if(tag==7)GestureKind.PinchZoom(r.float()) else listOf(GestureKind.Tap,GestureKind.TwoFingerTap,GestureKind.DoubleTapDrag,GestureKind.Swipe3Up,GestureKind.Swipe3Down,GestureKind.Swipe3Left,GestureKind.Swipe3Right)[tag])}
         5->InputEvent.Keyboard(r.varint().toUShort(),r.bool(),r.byte().toUByte())
-        else->InputEvent.MouseButton(r.byte().toUByte(),r.bool())
+        6->InputEvent.MouseButton(r.byte().toUByte(),r.bool())
+        else->r.string().let{if(it.toByteArray(Charsets.UTF_8).size>256)throw FrameException("text exceeds 256 UTF-8 bytes");InputEvent.Text(it)}
     };return InputPacket(seq,ts,e)}
 }
 

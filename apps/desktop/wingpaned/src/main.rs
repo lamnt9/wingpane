@@ -132,6 +132,7 @@ unsafe extern "C" {
     fn wp_input_button(button: u8, down: bool);
     fn wp_input_scroll(dx: f64, dy: f64);
     fn wp_input_key(keycode: u16, down: bool, modifiers: u8);
+    fn wp_input_text(units: *const u16, count: usize);
     fn wp_input_release_all();
     fn wp_input_trusted() -> bool;
     fn wp_screen_capture_trusted() -> bool;
@@ -163,11 +164,13 @@ const FEATURE_PEN_PRESSURE: u32 = 1 << 0;
 const FEATURE_POINTER_RELATIVE: u32 = 1 << 1;
 const FEATURE_GESTURE: u32 = 1 << 2;
 const FEATURE_KEYBOARD: u32 = 1 << 3;
+const FEATURE_TEXT: u32 = 1 << 4;
 const FEATURE_PEN_CONFIG: u32 = 1 << 5;
 const HOST_INPUT_FEATURES: u32 = FEATURE_PEN_PRESSURE
     | FEATURE_POINTER_RELATIVE
     | FEATURE_GESTURE
     | FEATURE_KEYBOARD
+    | FEATURE_TEXT
     | FEATURE_PEN_CONFIG;
 impl InputSink for NativeInputSink {
     fn pointer(&self, x: f32, y: f32, phase: TouchPhase) {
@@ -239,6 +242,11 @@ impl InputSink for NativeInputSink {
     fn key(&self, hid: u16, down: bool, mods: u8) {
         if let Some(keycode) = wingpaned::keymap_macos::mac_keycode(hid) {
             unsafe { wp_input_key(keycode, down, mods) }
+        }
+    }
+    fn text(&self, text: &str) {
+        for chunk in wingpane_proto::utf16_chunks(text) {
+            unsafe { wp_input_text(chunk.as_ptr(), chunk.len()) }
         }
     }
 }

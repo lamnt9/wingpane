@@ -93,6 +93,7 @@ mod tests {
                 button: 0,
                 is_down: true,
             },
+            InputEvent::Text(String::from("Tiếng Việt 😀")),
         ];
         for e in events {
             roundtrip(Packet::Input(InputPacket {
@@ -168,6 +169,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(bytes, [0x04, 0, 0, 0, 0, 7, 0, 1]);
+    }
+    #[test]
+    fn utf16_chunks_stay_within_limit_and_keep_surrogate_pairs() {
+        let mut text = alloc::string::String::from("a".repeat(19));
+        text.push_str("😀");
+        text.push_str(&"b".repeat(25));
+        let chunks = utf16_chunks(&text);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= 20));
+        let joined: alloc::vec::Vec<u16> = chunks.iter().flatten().copied().collect();
+        assert_eq!(joined, text.encode_utf16().collect::<alloc::vec::Vec<_>>());
+        assert!(chunks.iter().all(|chunk| String::from_utf16(chunk).is_ok()));
+    }
+    #[test]
+    fn text_event_rejects_payload_over_256_utf8_bytes() {
+        let packet = Packet::Input(InputPacket {
+            seq: 1,
+            ts_us: 1,
+            event: InputEvent::Text(String::from("é".repeat(129))),
+        });
+        assert_eq!(encode_frame(&packet, &mut Vec::new()), Err(FrameError::Encode));
     }
 }
 
@@ -300,6 +321,7 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
                 is_down: true,
             },
         ),
+        ("input_text", InputEvent::Text(String::from("Tiếng Việt 😀"))),
     ];
     for (name, event) in events {
         packets.push((
@@ -312,6 +334,24 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
         ));
     }
     packets
+}
+
+/// Split text into CoreGraphics-sized UTF-16 chunks without separating a
+/// surrogate pair. Each returned chunk contains at most 20 code units.
+pub fn utf16_chunks(text: &str) -> alloc::vec::Vec<alloc::vec::Vec<u16>> {
+    let mut chunks = alloc::vec::Vec::new();
+    let mut current = alloc::vec::Vec::with_capacity(20);
+    for character in text.chars() {
+        let mut encoded = [0u16; 2];
+        let units = character.encode_utf16(&mut encoded);
+        if current.len() + units.len() > 20 {
+            chunks.push(core::mem::take(&mut current));
+            current = alloc::vec::Vec::with_capacity(20);
+        }
+        current.extend_from_slice(units);
+    }
+    if !current.is_empty() { chunks.push(current); }
+    chunks
 }
 
 #[cfg(test)]
