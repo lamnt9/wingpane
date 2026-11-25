@@ -1099,8 +1099,8 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
     let mut commands_open = true;
     let mut applied_command = UcCommand::new(opts.uc_edge);
     let mut previous_mode = Mode::ExtendedDisplay;
-    let mut last_pong = tokio::time::Instant::now();
-    let mut ping_at = tokio::time::Instant::now();
+    // The client pings every 500 ms (TS-2); its pings are the UC liveness signal.
+    let mut last_client_ping = tokio::time::Instant::now();
     if status_json { emit_status(StatusEvent::Uc {status:uc_state.status(None)}); }
     let mut unknown_packet_warned = false;
     let mut input_trusted = unsafe { wp_input_trusted() };
@@ -1169,12 +1169,8 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                     }
                     // U4 reports secure=true but not the transition back to false.
                     dispatch_uc(uc_state.on_bridge(BridgeEvent::Status {tap_ok:uc_available && uc_started, secure_input:ffi::UcBridge::secure_input()}), &control_tx, status_json);
-                    if uc_state.negotiated() {
-                        if last_pong.elapsed() >= Duration::from_secs(3) { end_log.reason = "UC pong timeout".into(); break; }
-                        if tokio::time::Instant::now() >= ping_at {
-                            ping_at = tokio::time::Instant::now() + Duration::from_secs(1);
-                            let _ = control_tx.send(Packet::Control(ControlMessage::Ping(ffi::host_time_us())));
-                        }
+                    if uc_state.negotiated() && last_client_ping.elapsed() >= Duration::from_secs(3) {
+                        end_log.reason = "UC ping timeout".into(); break;
                     }
                     None
                 }
@@ -1221,6 +1217,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                 break;
             }
             Ok(Some(Packet::Control(message))) => {
+                if matches!(message, ControlMessage::Ping(_)) { last_client_ping = tokio::time::Instant::now(); }
                 let message = match message {
                     ControlMessage::SetMode(next_mode) => {
                         if next_mode == Mode::AndroidControl && input_router.mode() != Mode::AndroidControl {
@@ -1243,11 +1240,10 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                         dispatch_uc(uc_state.on_client(message), &control_tx, status_json);
                         continue;
                     }
-                    ControlMessage::Pong {..} => { last_pong = tokio::time::Instant::now(); continue; }
                     ControlMessage::Capabilities { features } => {
                         client_capabilities_seen = true;
                         if peer_features & FEATURE_UNIVERSAL_CONTROL == 0 && features & FEATURE_UNIVERSAL_CONTROL != 0 {
-                            last_pong = tokio::time::Instant::now();
+                            last_client_ping = tokio::time::Instant::now();
                         }
                         peer_features = features;
                         // Bit 8 also promises AndroidControl, which always removes

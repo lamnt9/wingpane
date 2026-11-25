@@ -2,6 +2,7 @@ package io.wingpane.uc
 
 import android.app.KeyguardManager
 import android.os.Build
+import android.util.Log
 import io.wingpane.WingpaneApplication
 import io.wingpane.net.ClientState
 import io.wingpane.net.WingpaneClient
@@ -51,6 +52,9 @@ class UcController(private val service: WingpaneAccessibilityService, private va
                     lastOverflow = client.droppedHostInputCount
                     returnMouse()
                 }
+                // The service may connect after MainActivity went to the background,
+                // so the FGS cannot rely on MainActivity alone to start it.
+                startForegroundServiceIfEligible()
                 val flags = statusFlags()
                 if (flags != lastFlags && client.supportsUniversalControl()) {
                     lastFlags = flags
@@ -152,6 +156,14 @@ class UcController(private val service: WingpaneAccessibilityService, private va
     private fun ready(): Boolean {
         val flags = statusFlags()
         return flags and 0x13u == 0x13u && flags and 0x8u == 0u
+    }
+
+    private fun startForegroundServiceIfEligible() {
+        try {
+            (service.application as WingpaneApplication).startUcServiceIfEligible()
+        } catch (error: RuntimeException) {
+            Log.w("WingpaneUc", "foreground service start failed", error)
+        }
     }
 
     private fun statusFlags(): UInt {
