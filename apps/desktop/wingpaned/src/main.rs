@@ -135,6 +135,8 @@ unsafe extern "C" {
     fn wp_input_text(units: *const u16, count: usize);
     fn wp_input_release_all();
     fn wp_input_trusted() -> bool;
+    fn wp_input_request_trust() -> bool;
+    fn wp_screen_capture_request() -> bool;
     fn wp_screen_capture_trusted() -> bool;
 }
 struct TestPatternGuard(Option<u32>);
@@ -389,6 +391,19 @@ fn options() -> Options {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--request-permissions") {
+        // One-shot: get this binary listed in Accessibility / Screen Recording, then exit.
+        unsafe {
+            if !wp_input_trusted() {
+                wp_input_request_trust();
+            }
+            if !wp_screen_capture_trusted() {
+                wp_screen_capture_request();
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        return Ok(());
+    }
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
         println!("Usage: wingpaned [--help] [--port <port>] [--no-adb] [--serial <id>] [--hidpi <true|false>] [--bitrate-mbps <n>] [--test-pattern] [--stats] [--status-json]");
         return Ok(());
@@ -665,10 +680,18 @@ async fn adb_monitor(port: u16, serial: String) {
             }
         };
         if state.status.success() && String::from_utf8_lossy(&state.stdout).trim() == "device" {
-            if reverse_active {
-                continue;
-            }
             let spec = format!("tcp:{port}");
+            // An adb server restart drops the tunnel without the device ever leaving `device` state,
+            // so verify it is still listed instead of trusting the flag.
+            if reverse_active {
+                let listed = adb(&["-s", &serial, "reverse", "--list"]).await;
+                let still_there = matches!(&listed, Ok(r) if r.status.success()
+                    && String::from_utf8_lossy(&r.stdout).contains(&spec));
+                if still_there || listed.is_err() {
+                    continue;
+                }
+                eprintln!("adb reverse lost for {serial}; re-adding");
+            }
             match adb(&["-s", &serial, "reverse", &spec, &spec]).await {
                 Ok(result) if result.status.success() => reverse_active = true,
                 Ok(result) => eprintln!(

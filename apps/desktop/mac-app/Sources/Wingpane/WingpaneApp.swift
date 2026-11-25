@@ -152,6 +152,13 @@ struct WingpaneApp: App {
         DispatchQueue.main.async {
             guard Date().timeIntervalSince(Self.lastSettingsOpen) > 3 else { return }
             Self.lastSettingsOpen = Date()
+            // The daemon (not this app) injects input, so it must be listed itself.
+            if let daemon = DaemonController.locateDaemonExecutable() {
+                let process = Process()
+                process.executableURL = daemon
+                process.arguments = ["--request-permissions"]
+                try? process.run()
+            }
             NSWorkspace.shared.open(url)
         }
     }

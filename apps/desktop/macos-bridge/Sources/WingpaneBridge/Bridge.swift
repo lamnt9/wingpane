@@ -48,6 +48,15 @@ public func wp_screen_capture_trusted() -> Bool { CGPreflightScreenCaptureAccess
 @_cdecl("wp_input_trusted")
 public func wp_input_trusted() -> Bool { AXIsProcessTrusted() }
 
+/// Ask macOS to list THIS process in Privacy & Security › Accessibility (one-shot prompt).
+@_cdecl("wp_input_request_trust")
+public func wp_input_request_trust() -> Bool {
+    AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+}
+
+@_cdecl("wp_screen_capture_request")
+public func wp_screen_capture_request() -> Bool { CGRequestScreenCaptureAccess() }
+
 @_cdecl("wp_host_time_us")
 public func wp_host_time_us() -> UInt64 {
     var info = mach_timebase_info_data_t()
