@@ -68,9 +68,21 @@ pub fn mac_keycode(usage: u16) -> Option<u16> {
     })
 }
 
+/// Inverse of the supported HID keyboard-page mapping.
+pub fn hid_usage(mac: u16) -> Option<u16> {
+    (0..=0xe7).find(|&usage| mac_keycode(usage) == Some(mac))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hid_usage_roundtrips_every_mapped_usage() {
+        for usage in 0..=u16::MAX {
+            if let Some(mac) = mac_keycode(usage) { assert_eq!(hid_usage(mac), Some(usage)); }
+        }
+        assert_eq!(hid_usage(u16::MAX), None);
+    }
     #[test]
     fn maps_common_keys_and_keypad_uniquely() {
         assert_eq!(mac_keycode(4), Some(0));

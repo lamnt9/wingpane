@@ -30,7 +30,9 @@ Mỗi dòng stdout là một object JSON có trường `event`. Log người đ�
 | `listening` | `port` | Socket sẵn sàng |
 | `client_connected` | `peer` | App Android nối vào |
 | `streaming` | `width`, `height`, `hz`, `hidpi`, `input_trusted` | Đã Accept + tạo màn ảo + bắt đầu capture; Accessibility hiện tại |
-| `mode` | `mode` | Host nhận SetMode và đổi chế độ input |
+| `mode` | `mode` | Host áp dụng SetMode từ client hoặc lệnh stdin |
+| `permissions` | `input_trusted`, `screen_recording`, `input_monitoring` (bool) | Khi quyền của daemon thay đổi; Input Monitoring dùng `CGPreflightListenEventAccess()` |
+| `uc` | `state`: `unavailable`·`disabled`·`armed`·`inside`, `edge`: `left`·`right`·`top`·`bottom`, `client_ready` (bool), `reason`? (string), `edge_blocked` (bool) | Khi trạng thái UC thay đổi và heartbeat 250 ms; app cũ bỏ qua event lạ |
 | `stats` | `fps`, `encode_p95_ms`, `write_p95_ms`, `backlog_dropped` | 1 lần/giây khi streaming |
 | `client_disconnected` | `reason` | Phiên kết thúc |
 | `error` | `message` | Lỗi không chết (vd mất quyền capture) |
@@ -38,6 +40,28 @@ Mỗi dòng stdout là một object JSON có trường `event`. Log người đ�
 
 * **MA-5:** `stats` chỉ phát khi `--status-json` (không cần `--stats`).
 * **MA-6:** Chuỗi trong JSON được escape đúng chuẩn; mỗi dòng ≤ 4 KiB.
+
+### 2.1 Lệnh app → daemon (stdin JSON Lines, WP-U5)
+
+Bật `--status-json` để daemon đọc stdin. Mỗi dòng UTF-8 là một object (tối đa 4095 byte trước newline); dòng lỗi sinh `error`, bỏ dòng đó rồi đọc tiếp. EOF đóng riêng kênh lệnh, không dừng phiên. CLI `--uc-edge <left|right|top|bottom>` đặt cạnh ban đầu (mặc định `right`).
+
+```json
+{"cmd":"uc_enable","enabled":true}
+{"cmd":"uc_edge","edge":"left"}
+{"cmd":"uc_return"}
+{"cmd":"uc_enable","enabled":false}
+```
+
+* `uc_enable`: bật `AndroidControl`; tắt trở về mode trước khi bật (D-21). Nếu chưa có bit 8 hai phía/tap không dùng được, báo `error`, không đổi mode. Lệnh trước khi kết nối được giữ đến khi nhận Capabilities.
+* `uc_edge`: đổi cạnh tại chỗ, không restart (ngoại lệ MA-8, D-20). Nếu đang inside, trả chuột về cạnh cũ trước rồi gửi `UcConfig` mới.
+* `uc_return`: trả chuột/bàn phím cho Mac, giữ mode AndroidControl để có thể vào lại cạnh.
+* Kênh `watch` giữ cấu hình mới nhất; đổi cạnh và bật/tắt liên tiếp không ghi đè mất trường của nhau. Nhiều lệnh bật/tắt chưa được xử lý được gộp thành giá trị cuối. Host gửi `SetMode` sau khi áp dụng; yêu cầu từ client không echo (D-2).
+* `uc.client_ready` = SERVICE_CONNECTED && GESTURES_OK && FGS_RUNNING && !KEYGUARD_LOCKED (§2.1 docs/07). `edge_blocked=true` khi toàn bộ cạnh bị display khác che hoặc chưa có hình học màn chính. `reason` dùng snake_case: `cursor_returned`, `hotkey`, `mode_changed`, `client_not_ready`, `tap_disabled`, `watchdog`, `secure_input`, `mac_locked`, `session_ended`.
+* Host chỉ quảng bá bit 8 khi tạo thử tap thành công; chỉ gửi UC/Input host→client sau bit 8 của peer (D-3). Bit 8 cũng yêu cầu ngừng video/gỡ màn ảo khi vào AndroidControl (D-1). Heartbeat Swift 250 ms; delta có deadline riêng 4 ms; refresh display mỗi 2 s. Peer UC không trả Pong trong 3 s kết thúc phiên và release UC trước input.
+
+Kiểm thủ công (orchestrator, ngoài sandbox): chạy daemon với `--status-json --uc-edge right`, rồi `cargo run -p wingpaned --example dump_client -- --uc --seconds 60 --uc-return-after 5`. Client giả quảng bá bit 8, đợi host bit 8, gửi ready + AndroidControl, in input/control; 5 s sau `UcEnter` gửi `UcExit{along:0.5}`. Kiểm Ctrl+C khi inside và stdin đổi cạnh theo docs/07 U14–U16; chạy R1 cho thay đổi `apply_mode` (§6.4).
+
+Giới hạn bridge U4 ở commit `6df577d` (chưa sửa trong phạm vi daemon): `UniversalControl.swift` gộp finger phase và momentum phase vào cùng byte; Rust không thể phân biệt chắc chắn để bỏ momentum theo D-17. `UcSupport.ucMacDeviceFlags` chỉ giữ modifier trái nên thông tin trái/phải đã mất trước callback. Reducer Rust hỗ trợ Momentum và đủ 8 modifier, nhưng dữ liệu runtime cần sửa bridge ở hai điểm này. Outside button state được kiểm tra qua Quartz trước yêu cầu vào; trạng thái Secure Input được đọc thêm ở heartbeat để nhận cả chiều tắt. Warp lùi vào 2 pt (§2.2 docs/07) vẫn phụ thuộc bridge U4; hiện bridge trả về ngay biên màn. Các hành vi native này cần kiểm trên máy thật.
 
 ## 3. Menu
 
