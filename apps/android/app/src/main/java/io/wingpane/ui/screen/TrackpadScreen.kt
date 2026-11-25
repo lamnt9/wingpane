@@ -83,7 +83,10 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
             fun KRow(keys: List<MacKey>) = Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 keys.forEach { k ->
                     if (k.spacer) { Box(Modifier.weight(k.weight).height(48.dp)); return@forEach }
-                    if (k.modifier) {
+                    if (k.caps) {
+                        val on = remember(modTick) { keyboard.capsLock }
+                        Key(k.label, Modifier.weight(k.weight), selected = on) { performWingpaneHaptic(context, view); keyboard.toggleCaps(); modTick++ }
+                    } else if (k.modifier) {
                         val state = remember(modTick) { keyboard.modifierState(k.usage) }
                         Key(if (state == 2) "${k.label}🔒" else k.label, Modifier.weight(k.weight), selected = state > 0) {
                             performWingpaneHaptic(context, view); keyboard.modifierTap(k.usage); modTick++
@@ -94,14 +97,14 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
             KRow(listOf(MacKey("esc", 0x29, 1.4f)) + "1234567890-=".map { MacKey(it.toString(), hidUsage(it)) } + MacKey("⌫", 0x2A, 1.6f))
             KRow(listOf(MacKey("tab", 0x2B, 1.6f)) + "QWERTYUIOP".map { MacKey(it.toString(), hidUsage(it)) } +
                 listOf(MacKey("[", 0x2F), MacKey("]", 0x30), MacKey("\\", 0x31)))
-            KRow(listOf(MacKey("", 0x00, 1.0f, spacer = true)) + "ASDFGHJKL".map { MacKey(it.toString(), hidUsage(it)) } +
+            KRow(listOf(MacKey("caps lock", 0x39, 1.8f, caps = true)) + "ASDFGHJKL".map { MacKey(it.toString(), hidUsage(it)) } +
                 listOf(MacKey(";", 0x33), MacKey("'", 0x34), MacKey("return", 0x28, 1.9f)))
-            KRow(listOf(MacKey("⇧", 0xE1, 2.2f, modifier = true)) + "ZXCVBNM".map { MacKey(it.toString(), hidUsage(it)) } +
-                listOf(MacKey(",", 0x36), MacKey(".", 0x37), MacKey("/", 0x38), MacKey("⇧", 0xE5, 2.2f, modifier = true)))
+            KRow(listOf(MacKey("shift", 0xE1, 2.2f, modifier = true)) + "ZXCVBNM".map { MacKey(it.toString(), hidUsage(it)) } +
+                listOf(MacKey(",", 0x36), MacKey(".", 0x37), MacKey("/", 0x38), MacKey("shift", 0xE5, 2.2f, modifier = true)))
             KRow(listOf(
-                MacKey("⌃", 0xE0, 1.2f, modifier = true), MacKey("⌥", 0xE2, 1.2f, modifier = true), MacKey("⌘", 0xE3, 1.5f, modifier = true),
-                MacKey("space", 0x2C, 6.0f),
-                MacKey("⌘", 0xE7, 1.5f, modifier = true), MacKey("⌥", 0xE6, 1.2f, modifier = true),
+                MacKey("control", 0xE0, 1.6f, modifier = true), MacKey("option", 0xE2, 1.5f, modifier = true), MacKey("command", 0xE3, 1.8f, modifier = true),
+                MacKey("space", 0x2C, 5.0f),
+                MacKey("command", 0xE7, 1.8f, modifier = true), MacKey("option", 0xE6, 1.5f, modifier = true),
                 MacKey("←", 0x50, 1.0f), MacKey("↓", 0x51, 1.0f), MacKey("↑", 0x52, 1.0f), MacKey("→", 0x4F, 1.0f),
             ))
         }
@@ -121,7 +124,7 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
     }
 }
 
-private data class MacKey(val label: String, val usage: Int, val weight: Float = 1f, val modifier: Boolean = false, val spacer: Boolean = false)
+private data class MacKey(val label: String, val usage: Int, val weight: Float = 1f, val modifier: Boolean = false, val spacer: Boolean = false, val caps: Boolean = false)
 
 @Composable
 private fun Key(label: String, modifier: Modifier, selected: Boolean = false, onClick: () -> Unit) {

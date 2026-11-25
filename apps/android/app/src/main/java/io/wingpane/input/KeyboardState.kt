@@ -10,9 +10,12 @@ class KeyboardState {
     fun modifierTap(usage: Int) {
         sticky[usage] = when (sticky[usage] ?: 0) { 0 -> 1; 1 -> 2; else -> 0 }
     }
+    var capsLock = false
+        private set
+    fun toggleCaps() { capsLock = !capsLock }
     fun modifierState(usage: Int): Int = sticky[usage] ?: 0
     fun key(usage: Int, down: Boolean): List<InputEvent> {
-        val mask = modifierMask()
+        val mask = modifierMask() or (if (capsLock && usage in 0x04..0x1D) 0x02 else 0)
         if (down) held[usage] = mask else held.remove(usage)
         val result = mutableListOf<InputEvent>(InputEvent.Keyboard(usage.toUShort(), down, mask.toUByte()))
         if (down) sticky.entries.filter { it.value == 1 }.forEach { it.setValue(0) }
