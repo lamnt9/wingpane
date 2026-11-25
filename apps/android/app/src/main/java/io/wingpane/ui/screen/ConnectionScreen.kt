@@ -130,6 +130,7 @@ fun ConnectionScreen(
     var showSetupGuide by rememberSaveable { mutableStateOf(false) }
     var hasAutoSuggestedSetupGuide by rememberSaveable { mutableStateOf(false) }
     var showSettingsDialog by rememberSaveable { mutableStateOf(false) }
+    var showAbout by rememberSaveable { mutableStateOf(false) }
 
     // Brief: S1 Setup guide is also auto-suggested once after 30s in S1 Waiting.
     LaunchedEffect(uiModel.screenId, hasAutoSuggestedSetupGuide) {
@@ -295,11 +296,23 @@ fun ConnectionScreen(
                 showSettingsDialog = false
                 showSetupGuide = true
             },
+            onOpenAbout = {
+                performWingpaneHaptic(context, view)
+                showSettingsDialog = false
+                showAbout = true
+            },
             onDismiss = {
                 performWingpaneHaptic(context, view)
                 showSettingsDialog = false
             },
         )
+    }
+
+    if (showAbout) {
+        AboutDialog(onDismiss = {
+            performWingpaneHaptic(context, view)
+            showAbout = false
+        })
     }
 }
 
@@ -1095,6 +1108,7 @@ private fun ConnectionSettingsDialog(
     threeFingerTapHud: Boolean,
     onThreeFingerTapHudChange: (Boolean) -> Unit,
     onOpenSetupGuide: () -> Unit,
+    onOpenAbout: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = WingpaneTheme.colors
@@ -1216,6 +1230,63 @@ private fun ConnectionSettingsDialog(
                     onClick = onOpenSetupGuide,
                     fillMaxWidth = true,
                 )
+                WingpaneSecondaryButton(
+                    label = "About & guide",
+                    icon = Icons.Rounded.Info,
+                    onClick = onOpenAbout,
+                    fillMaxWidth = true,
+                )
+            }
+        }
+    }
+}
+
+private val aboutGuide = listOf(
+    "Display" to "Your tablet is a second Mac screen. Touch works like a touchscreen; S Pen draws with pressure and tilt.",
+    "Pen" to "The tablet becomes a graphics tablet for your main display. Hover moves the cursor, the side button right-clicks. Video is paused to save battery.",
+    "Trackpad" to "One finger moves the cursor, tap clicks, two-finger tap right-clicks, two fingers scroll, tap-and-drag moves things. Three-finger swipe: Mission Control, App Exposé, switch Space. Pinch zooms.",
+    "Keyboard" to "Switch to Keyboard / Numpad for a MacBook-style layout. Tap a modifier once for the next key, twice to lock. IME types Vietnamese through your tablet keyboard.",
+    "Mac setup" to "On the Mac enable Screen Recording and Accessibility for Wingpane and wingpaned (menu bar → Permissions). Without Accessibility the Mac ignores the pen, trackpad and keyboard.",
+    "HUD" to "Tap the pill at the top of the stream to switch modes, adjust pen pressure, palm rejection and disconnect.",
+)
+
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+    val colors = WingpaneTheme.colors
+    val spacing = WingpaneTheme.spacing
+    val radius = WingpaneTheme.radius
+    val context = LocalContext.current
+    val version = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: ""
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(radius.card),
+            color = colors.surface1,
+            border = BorderStroke(1.dp, colors.border),
+            modifier = Modifier.widthIn(min = 280.dp, max = 460.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(spacing.md),
+            ) {
+                Text("About Wingpane", style = WingpaneTheme.typography.headingMd, color = colors.text)
+                Text(
+                    "Version $version\nTurn your Android tablet into a Mac secondary display, pen tablet and trackpad.\nhttps://github.com/lamnt9/wingpane",
+                    style = WingpaneTheme.typography.caption,
+                    color = colors.textMuted,
+                )
+                aboutGuide.forEach { (title, body) ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(title, style = WingpaneTheme.typography.bodyStrong, color = colors.text)
+                        Text(body, style = WingpaneTheme.typography.caption, color = colors.textMuted)
+                    }
+                }
+                WingpanePrimaryButton(label = stringResource(R.string.action_done), icon = null, onClick = onDismiss, fillMaxWidth = true)
             }
         }
     }
