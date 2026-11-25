@@ -10,6 +10,7 @@ class KeyboardState {
     fun modifierTap(usage: Int) {
         sticky[usage] = when (sticky[usage] ?: 0) { 0 -> 1; 1 -> 2; else -> 0 }
     }
+    fun modifierState(usage: Int): Int = sticky[usage] ?: 0
     fun key(usage: Int, down: Boolean): List<InputEvent> {
         val mask = modifierMask()
         if (down) held[usage] = mask else held.remove(usage)
