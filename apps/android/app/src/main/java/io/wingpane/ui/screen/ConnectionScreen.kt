@@ -1250,12 +1250,22 @@ private val aboutGuide = listOf(
     "HUD" to "Tap the pill at the top of the stream to switch modes, adjust pen pressure, palm rejection and disconnect.",
 )
 
+private val aboutGuideVi = listOf(
+    "Display" to "Tablet thành màn hình phụ của Mac. Chạm như màn hình cảm ứng; S Pen vẽ có lực nhấn và độ nghiêng.",
+    "Pen" to "Tablet thành bảng vẽ cho màn hình chính. Rê bút để di con trỏ, nút cạnh bút là chuột phải. Video tạm dừng để tiết kiệm pin.",
+    "Trackpad" to "Một ngón di con trỏ, chạm là click, chạm hai ngón là chuột phải, hai ngón trượt để cuộn, chạm rồi kéo để kéo thả. Ba ngón vuốt: Mission Control, App Exposé, chuyển Space. Chụm hai ngón để zoom.",
+    "Keyboard" to "Chuyển sang Keyboard / Numpad để có bàn phím kiểu MacBook. Bấm phím modifier một lần cho phím kế tiếp, hai lần để khoá. IME để gõ tiếng Việt bằng bàn phím của tablet.",
+    "Cài đặt trên Mac" to "Trên Mac bật Screen Recording và Accessibility cho Wingpane và wingpaned (menu trên thanh menu → Permissions). Thiếu Accessibility thì Mac bỏ qua bút, trackpad và bàn phím.",
+    "HUD" to "Chạm vào viên thuốc ở đầu màn hình stream để đổi chế độ, chỉnh lực bút, chống chạm nhầm lòng bàn tay và ngắt kết nối.",
+)
+
 @Composable
 private fun AboutDialog(onDismiss: () -> Unit) {
     val colors = WingpaneTheme.colors
     val spacing = WingpaneTheme.spacing
     val radius = WingpaneTheme.radius
     val context = LocalContext.current
+    var vietnamese by rememberSaveable { mutableStateOf(java.util.Locale.getDefault().language == "vi") }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: ""
     }
@@ -1274,13 +1284,17 @@ private fun AboutDialog(onDismiss: () -> Unit) {
                     .padding(spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(spacing.md),
             ) {
-                Text("About Wingpane", style = WingpaneTheme.typography.headingMd, color = colors.text)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (vietnamese) "Giới thiệu Wingpane" else "About Wingpane", style = WingpaneTheme.typography.headingMd, color = colors.text)
+                    WingpaneSecondaryButton(label = if (vietnamese) "English" else "Tiếng Việt", icon = null, onClick = { vietnamese = !vietnamese })
+                }
                 Text(
-                    "Version $version\nTurn your Android tablet into a Mac secondary display, pen tablet and trackpad.\nhttps://github.com/lamnt9/wingpane",
+                    if (vietnamese) "Phiên bản $version\nBiến tablet Android thành màn hình phụ, bảng vẽ và trackpad cho Mac.\nhttps://github.com/lamnt9/wingpane"
+                    else "Version $version\nTurn your Android tablet into a Mac secondary display, pen tablet and trackpad.\nhttps://github.com/lamnt9/wingpane",
                     style = WingpaneTheme.typography.caption,
                     color = colors.textMuted,
                 )
-                aboutGuide.forEach { (title, body) ->
+                (if (vietnamese) aboutGuideVi else aboutGuide).forEach { (title, body) ->
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(title, style = WingpaneTheme.typography.bodyStrong, color = colors.text)
                         Text(body, style = WingpaneTheme.typography.caption, color = colors.textMuted)
