@@ -19,6 +19,11 @@ class ProtocolTest {
             "control_host_time" to ControlMessage.HostTime(0x1020304050607080uL, 0x2010203040506070uL),
             "control_capabilities" to ControlMessage.Capabilities(0x4fu),
             "control_pen_config" to ControlMessage.PenConfig(listOf(.25f,.25f,.75f,.75f), PenTarget.MainDisplay),
+            "control_set_mode_android_control" to ControlMessage.SetMode(Mode.AndroidControl),
+            "control_uc_config" to ControlMessage.UcConfig(UcEdge.Right),
+            "control_uc_enter" to ControlMessage.UcEnter(UcEdge.Right,.375f,2u.toUByte()),
+            "control_uc_exit" to ControlMessage.UcExit(.625f,UcExitReason.Hotkey),
+            "control_uc_status" to ControlMessage.UcStatus(0x13u),
             "reject_version_mismatch" to ControlMessage.Reject(RejectReason.VersionMismatch,1u),
             "reject_unsupported_codec" to ControlMessage.Reject(RejectReason.UnsupportedCodec),
             "reject_invalid_hello" to ControlMessage.Reject(RejectReason.InvalidHello),
@@ -35,6 +40,7 @@ class ProtocolTest {
             "input_keyboard" to Packet.Input(InputPacket(base,ts,InputEvent.Keyboard(0x1234u,true,5u))),
             "input_mouse_button" to Packet.Input(InputPacket(base,ts,InputEvent.MouseButton(0u,true))),
             "input_text" to Packet.Input(InputPacket(base,ts,InputEvent.Text("Tiếng Việt 😀"))),
+            "input_precise_scroll" to Packet.Input(InputPacket(base,ts,InputEvent.PreciseScroll(-3.5f,12.25f,ScrollPhase.Changed))),
         )
     }
 
@@ -68,6 +74,20 @@ class ProtocolTest {
         assertEquals(1L, decoder.skippedFrames)
         assertNull(decoder.next())
     }
+    @Test fun unknownNestedModeAndInputTagsAreSkipped() {
+        val ping = Packet.Control(ControlMessage.Ping(42uL)).encodeFrame()
+        // Packet::Control, SetMode with unknown Mode discriminant.
+        val unknownMode = byteArrayOf(3,0,0,0,0,2,99)
+        val decoder = FrameDecoder(); decoder.push(unknownMode + ping)
+        assertEquals(Packet.Control(ControlMessage.Ping(42uL)), decoder.next())
+        assertEquals(1L, decoder.skippedFrames)
+        // Packet::Input, seq=0, ts=0, unknown InputEvent discriminant.
+        val unknownInput = byteArrayOf(4,0,0,0,2,0,0,99)
+        val inputDecoder = FrameDecoder(); inputDecoder.push(unknownInput + ping)
+        assertEquals(Packet.Control(ControlMessage.Ping(42uL)), inputDecoder.next())
+        assertEquals(1L, inputDecoder.skippedFrames)
+    }
+
     @Test fun textPayloadIsLimitedTo256Utf8Bytes() {
         try {
             Packet.Input(InputPacket(0u, 0uL, InputEvent.Text("é".repeat(129)))).encodeFrame()

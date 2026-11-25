@@ -57,3 +57,28 @@ File này lưu trữ các quyết định kiến trúc quan trọng của dự �
 * **Trạng thái:** Đã chốt trong kế hoạch Phase 2 (`docs/06-pen-trackpad-plan.md`).
 * **Quyết định:** Android giữ stream surface qua đổi mode. Nếu client quảng bá `VIDEO_SUSPEND`, host gỡ virtual display và capture khi vào control mode, tạo lại khi quay về Display; nếu không, giữ hành vi hiện tại (D-1). Áp đường cong pressure ở host làm nguồn thống nhất (D-4). Chỉ gửi tính năng sau capabilities (D-6), với `INPUT_TRUSTED` phản ánh Accessibility.
 * **Hệ quả:** Display stream chỉ tạm ngừng phía host khi client hỗ trợ; khi tạo lại, host yêu cầu keyframe. Input bút không dùng ID display cũ.
+
+## [ADR-008] 2026-11-25: Universal Control là mode thứ tư
+* **Trạng thái:** Approved theo kế hoạch `docs/07-universal-control-plan.md` (D-1).
+* **Quyết định:** Thêm `Mode::AndroidControl` tag 3; mode này không có virtual display. Tái dùng SetMode và display transition để gỡ capture/display khi điều khiển Android.
+* **Hệ quả:** Không xem được stream Mac đồng thời; trở lại mode có display sẽ tạo lại display như luồng hiện tại.
+
+## [ADR-009] 2026-11-25: Gating Universal Control bằng capability bit 8
+* **Trạng thái:** Approved theo kế hoạch (D-3).
+* **Quyết định:** Chỉ trao đổi mode AndroidControl, Uc*, PreciseScroll và Input host→client sau khi peer báo bit 8. Accept.selected_mode không bao giờ là AndroidControl.
+* **Hệ quả:** Peer cũ không bị gửi các enum tag mới; bit được định nghĩa ở WP-U0 nhưng daemon chưa quảng bá.
+
+## [ADR-010] 2026-11-25: Bắt input Mac bằng CGEventTap trong daemon
+* **Trạng thái:** Approved theo kế hoạch (D-6), cần xác nhận bằng spike macOS WP-U4.
+* **Quyết định:** Universal Control bắt mouse, keyboard và scroll bằng active `kCGHIDEventTap`; callback nuốt event khi đang điều khiển Android và đẩy bản sao vào Rust.
+* **Hệ quả:** Tap cần thread có CFRunLoop; hotkey/watchdog/khôi phục con trỏ phải bảo đảm thoát an toàn.
+
+## [ADR-011] 2026-11-25: Android inject qua AccessibilityService
+* **Trạng thái:** Approved theo kế hoạch (D-12).
+* **Quyết định:** Dùng `AccessibilityService` gesture API và global actions; không root hoặc `adb shell input`.
+* **Hệ quả:** Android áp dụng các giới hạn của dispatchGesture, quyền Accessibility và hỗ trợ phiên bản API đã nêu trong kế hoạch.
+
+## [ADR-012] 2026-11-25: Gõ tiếng Việt bằng Telex ở Android
+* **Trạng thái:** Approved theo kế hoạch (D-15), quy tắc nhập liệu cần kiểm nghiệm khi triển khai.
+* **Quyết định:** Gửi HID thô, ghép Telex tại Android; không làm cầu IME Mac và không dựa vào IME Android để ghép chuỗi.
+* **Hệ quả:** V1 nhắm bàn phím US ANSI; cách xử lý event tap với EVKey/OpenKey cần kiểm trên máy thực.

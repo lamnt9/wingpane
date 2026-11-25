@@ -5,6 +5,8 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_FRAME_LEN: u32 = 8 * 1024 * 1024;
+pub const LAST_CONTROL_TAG: u64 = 14;
+pub const LAST_INPUT_TAG: u64 = 8;
 
 /// Video frame packet delivered over transport.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -170,13 +172,13 @@ fn has_unknown_tag(body: &[u8]) -> bool {
         return false;
     };
     match packet_tag {
-        0 => varint(body, &mut at).is_some_and(|tag| tag > 9),
+        0 => varint(body, &mut at).is_some_and(|tag| tag > LAST_CONTROL_TAG),
         1 => false,
         2 => {
             if varint(body, &mut at).is_none() || varint(body, &mut at).is_none() {
                 return false;
             }
-            varint(body, &mut at).is_some_and(|tag| tag > 7)
+            varint(body, &mut at).is_some_and(|tag| tag > LAST_INPUT_TAG)
         }
         _ => true,
     }

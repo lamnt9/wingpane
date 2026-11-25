@@ -312,6 +312,7 @@ pub fn handle_input(sink: &dyn InputSink, packet: wingpane_proto::InputPacket) -
             modifiers,
         } => sink.key(usb_hid_usage, is_down, modifiers),
         InputEvent::Text(_) => return false,
+        InputEvent::PreciseScroll { .. } => return false,
     }
     true
 }
@@ -583,6 +584,30 @@ mod tests {
             got.iter().map(|(x, _, _)| *x).collect::<Vec<_>>(),
             [0.1, 0.2, 0.3]
         );
+    }
+
+    #[test]
+    fn android_control_mode_ignores_all_client_to_host_input() {
+        struct Counting(Mutex<usize>);
+        impl InputSink for Counting {
+            fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) { *self.0.lock().unwrap() += 1; }
+            fn release_all(&self) {}
+            fn relative(&self, _: f32, _: f32) { *self.0.lock().unwrap() += 1; }
+            fn button(&self, _: u8, _: bool) { *self.0.lock().unwrap() += 1; }
+            fn key(&self, _: u16, _: bool, _: u8) { *self.0.lock().unwrap() += 1; }
+            fn scroll(&self, _: f32, _: f32) { *self.0.lock().unwrap() += 1; }
+        }
+        let mut sink = Counting(Mutex::new(0));
+        let router = InputRouter::new(wingpane_proto::Mode::AndroidControl, &mut sink);
+        for event in [
+            wingpane_proto::InputEvent::PointerDelta { dx: 1.0, dy: 1.0 },
+            wingpane_proto::InputEvent::MouseButton { button: 0, is_down: true },
+            wingpane_proto::InputEvent::Keyboard { usb_hid_usage: 4, is_down: true, modifiers: 0 },
+            wingpane_proto::InputEvent::PreciseScroll { dx: 1.0, dy: 1.0, phase: wingpane_proto::ScrollPhase::Changed },
+        ] {
+            assert!(!router.handle_input(wingpane_proto::InputPacket { seq: 1, ts_us: 1, event }));
+        }
+        assert_eq!(*sink.0.lock().unwrap(), 0);
     }
 
     #[test]

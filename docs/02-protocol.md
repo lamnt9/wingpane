@@ -14,6 +14,7 @@ pub enum Mode {
     ExtendedDisplay,
     GraphicsTablet,
     TrackpadKeyboard,
+    AndroidControl, // tag 3; Universal Control (requires capability bit 8)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -40,7 +41,17 @@ pub enum ControlMessage {
     Capabilities { features: u32 },
     // Appended tag 10: stylus response curve and output display.
     PenConfig { pressure_curve: [f32; 4], target: PenTarget },
+    // Tags 11..14: Universal Control. Sent only after peer advertises bit 8.
+    UcConfig { edge: UcEdge },
+    UcEnter { edge: UcEdge, along: f32, ime_hint: u8 },
+    UcExit { along: f32, reason: UcExitReason },
+    UcStatus { flags: u32 },
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UcEdge { Left, Right, Top, Bottom }
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UcExitReason { CursorReturned, Hotkey, ModeChanged, ClientNotReady, TapDisabled, Watchdog, SecureInput, MacLocked, SessionEnded }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PenTarget { MainDisplay, VirtualDisplay }
@@ -108,7 +119,11 @@ pub enum InputEvent {
     },
     MouseButton { button: u8, is_down: bool }, // tag 6; 0=left, 1=right, 2=middle
     Text(String), // tag 7; committed UTF-8 text, at most 256 bytes
+    PreciseScroll { dx: f32, dy: f32, phase: ScrollPhase }, // tag 8; host → client UC scroll
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollPhase { Discrete, Began, Changed, Ended, Momentum }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum TouchPhase {
@@ -177,6 +192,16 @@ pub enum GestureKind {
 * **TS-2:** Host trả lời mỗi `Ping(t)` bằng `Pong(t)` **rồi ngay sau đó** `HostTime { echo_ns: t, host_us: <đồng hồ monotonic host, cùng gốc với VideoPacket.pts_us> }`.
 * **TS-3:** Client ước lượng `offset_us = host_us − (t_send_us + t_recv_us)/2`, chỉ nhận mẫu có RTT nhỏ nhất trong cửa sổ 10 s gần nhất. Độ trễ một frame = `client_now_us_at_render + offset_us − pts_us`.
 * **TS-4:** Client hiện tại nhận `HostTime`; enum tag chưa biết được bỏ qua theo cơ chế tương thích WP-0.
+
+## 8. Universal Control — v1, bổ sung 2026-11-25 (WP-U0)
+
+Protocol vẫn giữ `PROTO_VERSION = 1`; mọi biến thể mới chỉ nối cuối enum. `Mode::AndroidControl` là tag 3. Các control tag 11–14 lần lượt là `UcConfig`, `UcEnter`, `UcExit`, `UcStatus`; input tag 8 là `PreciseScroll`. `UcEdge` tags 0..3 = Left/Right/Top/Bottom; `UcExitReason` tags 0..8 = CursorReturned, Hotkey, ModeChanged, ClientNotReady, TapDisabled, Watchdog, SecureInput, MacLocked, SessionEnded. `ScrollPhase` tags 0..4 = Discrete, Began, Changed, Ended, Momentum.
+
+`along` nằm trong 0..1 dọc cạnh; `ime_hint`: 0 unknown, 1 latin, 2 vietnamese. `UcStatus.flags` bit 0..5 lần lượt là SERVICE_CONNECTED, GESTURES_OK, IME_CONNECTION, KEYGUARD_LOCKED, FGS_RUNNING, OVERLAY_SHOWN. UC-ready yêu cầu bit 0, 1, 4 và không có bit 3.
+
+Capabilities bit 8 là `UNIVERSAL_CONTROL`; không gửi AndroidControl, Uc*, PreciseScroll hay Input host→client đến peer chưa công bố bit này. `Accept.selected_mode` không dùng AndroidControl. Bit 8 được định nghĩa trong schema nhưng chưa được daemon quảng bá ở U0.
+
+`PointerDelta` host→client đo point macOS sau gia tốc; `Keyboard.modifiers` là HID boot modifiers (Cmd ở bit 3/7). PreciseScroll mang delta pixel cùng phase trackpad; scroll Momentum từ macOS được nhận dạng để client có thể bỏ qua.
 
 ## 7. Capabilities — v1, Phase 2 WP-0
 

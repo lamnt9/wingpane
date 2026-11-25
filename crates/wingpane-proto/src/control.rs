@@ -4,13 +4,20 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTO_VERSION: u16 = 1;
 
-/// Three operating modes of Wingpane.
+/// Operating modes of Wingpane.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     ExtendedDisplay,
     GraphicsTablet,
     TrackpadKeyboard,
+    AndroidControl,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UcEdge { Left, Right, Top, Bottom }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UcExitReason { CursorReturned, Hotkey, ModeChanged, ClientNotReady, TapDisabled, Watchdog, SecureInput, MacLocked, SessionEnded }
 
 /// Destination used by the host when routing pen samples.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +61,10 @@ pub enum ControlMessage {
         pressure_curve: [f32; 4],
         target: PenTarget,
     },
+    UcConfig { edge: UcEdge },
+    UcEnter { edge: UcEdge, along: f32, ime_hint: u8 },
+    UcExit { along: f32, reason: UcExitReason },
+    UcStatus { flags: u32 },
 }
 
 /// Why the host declined a connection. Variant order is part of the wire format.

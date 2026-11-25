@@ -6,9 +6,17 @@ mod control;
 mod frame;
 mod input;
 
-pub use control::{ControlMessage, Mode, PenTarget, RejectReason, VideoCodec, PROTO_VERSION};
+pub use control::{ControlMessage, Mode, PenTarget, RejectReason, UcEdge, UcExitReason, VideoCodec, PROTO_VERSION};
 pub use frame::{encode_frame, FrameDecoder, FrameError, Packet, VideoPacket, MAX_FRAME_LEN};
-pub use input::{GestureKind, InputEvent, InputPacket, TouchPhase};
+pub use input::{GestureKind, InputEvent, InputPacket, ScrollPhase, TouchPhase};
+
+pub const FEATURE_UNIVERSAL_CONTROL: u32 = 1 << 8;
+pub const UC_STATUS_SERVICE_CONNECTED: u32 = 1 << 0;
+pub const UC_STATUS_GESTURES_OK: u32 = 1 << 1;
+pub const UC_STATUS_IME_CONNECTION: u32 = 1 << 2;
+pub const UC_STATUS_KEYGUARD_LOCKED: u32 = 1 << 3;
+pub const UC_STATUS_FGS_RUNNING: u32 = 1 << 4;
+pub const UC_STATUS_OVERLAY_SHOWN: u32 = 1 << 5;
 
 #[cfg(test)]
 mod tests {
@@ -53,6 +61,10 @@ mod tests {
                 pressure_curve: [0.25, 0.25, 0.75, 0.75],
                 target: PenTarget::MainDisplay,
             },
+            ControlMessage::UcConfig { edge: UcEdge::Right },
+            ControlMessage::UcEnter { edge: UcEdge::Right, along: 0.375, ime_hint: 2 },
+            ControlMessage::UcExit { along: 0.625, reason: UcExitReason::Hotkey },
+            ControlMessage::UcStatus { flags: 0x13 },
         ];
         for c in controls {
             roundtrip(Packet::Control(c));
@@ -94,6 +106,7 @@ mod tests {
                 is_down: true,
             },
             InputEvent::Text(String::from("Tiếng Việt 😀")),
+            InputEvent::PreciseScroll { dx: -3.5, dy: 12.25, phase: ScrollPhase::Changed },
         ];
         for e in events {
             roundtrip(Packet::Input(InputPacket {
@@ -249,6 +262,13 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
             host_us: 0x2010_2030_4050_6070,
         },
     ));
+    controls.extend([
+        ("control_set_mode_android_control", ControlMessage::SetMode(Mode::AndroidControl)),
+        ("control_uc_config", ControlMessage::UcConfig { edge: UcEdge::Right }),
+        ("control_uc_enter", ControlMessage::UcEnter { edge: UcEdge::Right, along: 0.375, ime_hint: 2 }),
+        ("control_uc_exit", ControlMessage::UcExit { along: 0.625, reason: UcExitReason::Hotkey }),
+        ("control_uc_status", ControlMessage::UcStatus { flags: 0x13 }),
+    ]);
     controls.push((
         "control_capabilities",
         ControlMessage::Capabilities { features: 0x4f },
@@ -328,6 +348,7 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
             "input_text",
             InputEvent::Text(String::from("Tiếng Việt 😀")),
         ),
+        ("input_precise_scroll", InputEvent::PreciseScroll { dx: -3.5, dy: 12.25, phase: ScrollPhase::Changed }),
     ];
     for (name, event) in events {
         packets.push((

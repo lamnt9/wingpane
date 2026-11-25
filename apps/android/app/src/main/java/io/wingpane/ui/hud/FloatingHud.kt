@@ -739,7 +739,12 @@ private fun ExpandedHudPanel(
                 Text(stringResource(R.string.hud_stream_mode), style = WingpaneTheme.typography.captionStrong, color = colors.textMuted)
                 Row(horizontalArrangement = Arrangement.spacedBy(spacing.xs), modifier = Modifier.fillMaxWidth()) {
                     listOf(Mode.ExtendedDisplay to stringResource(R.string.hud_mode_display), Mode.GraphicsTablet to stringResource(R.string.hud_mode_pen), Mode.TrackpadKeyboard to stringResource(R.string.hud_mode_trackpad)).forEach { (candidate, title) ->
-                        val enabled = candidate == Mode.ExtendedDisplay || capabilitiesReceived && (hostFeatures and if (candidate == Mode.GraphicsTablet) 1 else 2) != 0
+                        val enabled = when (candidate) {
+                            Mode.ExtendedDisplay -> true
+                            Mode.GraphicsTablet -> capabilitiesReceived && (hostFeatures and 1) != 0
+                            Mode.TrackpadKeyboard -> capabilitiesReceived && (hostFeatures and 2) != 0
+                            Mode.AndroidControl -> false
+                        }
                         val selected = candidate == mode
                         Box(modifier = Modifier.weight(1f).heightIn(min = touch.minTarget).clip(RoundedCornerShape(spacing.sm)).background(if (selected) colors.primary else colors.surface2).border(1.dp, colors.border, RoundedCornerShape(spacing.sm)).clickable(enabled = enabled, role = Role.Button) { onPanelInteraction(); onModeChange(candidate) }.padding(horizontal = spacing.xs, vertical = spacing.xs), contentAlignment = Alignment.Center) {
                             Text(title, style = WingpaneTheme.typography.captionStrong, color = if (selected) colors.onPrimary else if (enabled) colors.text else colors.textMuted, textAlign = TextAlign.Center)

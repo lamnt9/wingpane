@@ -176,7 +176,7 @@ enum DisplayTransition {
 
 /// Display + Trackpad keep the virtual display (Trackpad shows it above the pad); only Pen removes it.
 fn mode_has_display(mode: Mode) -> bool {
-    mode != Mode::GraphicsTablet
+    !matches!(mode, Mode::GraphicsTablet | Mode::AndroidControl)
 }
 
 fn display_transition(prev: Mode, next: Mode, suspend_supported: bool) -> DisplayTransition {
@@ -231,6 +231,7 @@ mod display_transition_tests {
     use super::*;
     #[test]
     fn transition_requires_negotiated_suspend_and_crossing_display_boundary() {
+        assert!(!mode_has_display(Mode::AndroidControl));
         assert_eq!(
             display_transition(Mode::ExtendedDisplay, Mode::GraphicsTablet, true),
             DisplayTransition::Remove
@@ -239,6 +240,9 @@ mod display_transition_tests {
             display_transition(Mode::GraphicsTablet, Mode::TrackpadKeyboard, true),
             DisplayTransition::Create
         );
+        assert_eq!(display_transition(Mode::TrackpadKeyboard, Mode::AndroidControl, true), DisplayTransition::Remove);
+        assert_eq!(display_transition(Mode::GraphicsTablet, Mode::AndroidControl, true), DisplayTransition::None);
+        assert_eq!(display_transition(Mode::AndroidControl, Mode::ExtendedDisplay, true), DisplayTransition::Create);
         assert_eq!(
             display_transition(Mode::ExtendedDisplay, Mode::TrackpadKeyboard, true),
             DisplayTransition::None
@@ -260,6 +264,7 @@ mod video_suspend_tests {
         assert!(!should_send_video(Mode::ExtendedDisplay, true, false));
         assert!(should_send_video(Mode::ExtendedDisplay, true, true));
         assert!(!should_send_video(Mode::GraphicsTablet, false, true));
+        assert!(!should_send_video(Mode::AndroidControl, false, true));
         assert!(should_send_video(Mode::TrackpadKeyboard, false, true));
     }
 }
@@ -1049,6 +1054,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                     let mode = match writer_mode.load(Ordering::Acquire) {
                         1 => Mode::GraphicsTablet,
                         2 => Mode::TrackpadKeyboard,
+                        3 => Mode::AndroidControl,
                         _ => Mode::ExtendedDisplay,
                     };
                     let suspend = writer_video_suspend.load(Ordering::Acquire);
@@ -1133,6 +1139,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                                 Mode::ExtendedDisplay => 0,
                                 Mode::GraphicsTablet => 1,
                                 Mode::TrackpadKeyboard => 2,
+                                Mode::AndroidControl => 3,
                             },
                             Ordering::Release,
                         );

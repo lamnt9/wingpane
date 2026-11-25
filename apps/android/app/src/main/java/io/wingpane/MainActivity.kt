@@ -195,12 +195,11 @@ class MainActivity : ComponentActivity() {
                         modifier = surfaceModifier,
                     )
 
-                    if (uiModel.isStreamScreen && mode == Mode.GraphicsTablet) {
-                        PenCanvasScreen(onStylus = { event, view ->
+                    when (mode) {
+                        Mode.GraphicsTablet -> if (uiModel.isStreamScreen) PenCanvasScreen(onStylus = { event, view ->
                             if (hostSupportsPen()) handleStylus(view, event, hover = event.actionMasked in setOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT)) else false
                         })
-                    } else if (uiModel.isStreamScreen && mode == Mode.TrackpadKeyboard) {
-                        TrackpadScreen(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.58f), detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
+                        Mode.TrackpadKeyboard -> if (uiModel.isStreamScreen) TrackpadScreen(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.58f), detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
                             val allowed = when (event) {
                                 is InputEvent.Keyboard -> hostCapabilitiesReceived && (hostFeatures and (1 shl 3)) != 0
                                 is InputEvent.Text -> hostCapabilitiesReceived && (hostFeatures and (1 shl 4)) != 0
@@ -214,6 +213,7 @@ class MainActivity : ComponentActivity() {
                             }
                             if (allowed) client.sendInput(event)
                         } })
+                        Mode.ExtendedDisplay, Mode.AndroidControl -> Unit
                     }
                     if (uiModel.isStreamScreen) {
                         StreamHudOverlay(
@@ -253,7 +253,10 @@ class MainActivity : ComponentActivity() {
                                     cancelTouch()
                                     mode = next
                                     if (!penTargetCustomized) {
-                                        penTarget = if (next == Mode.GraphicsTablet) PenTarget.MainDisplay else PenTarget.VirtualDisplay
+                                        penTarget = when (next) {
+                                            Mode.GraphicsTablet -> PenTarget.MainDisplay
+                                            Mode.ExtendedDisplay, Mode.TrackpadKeyboard, Mode.AndroidControl -> PenTarget.VirtualDisplay
+                                        }
                                     }
                                     lifecycleScope.launch {
                                         client.sendControl(ControlMessage.SetMode(next))
