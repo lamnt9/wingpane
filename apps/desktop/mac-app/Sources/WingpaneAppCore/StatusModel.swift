@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -24,7 +25,26 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
     private var _isRunning: Bool = false
     private var _lastEvent: DaemonEvent?
 
-    public init() {}
+    // While a menu is open, republishing makes SwiftUI rebuild it and closes open submenus.
+    // Dedupe identical states and hold changes until tracking ends.
+    private var menuOpen = false
+    private var pendingChange = false
+    private var lastSnapshot = ""
+    private var observers: [NSObjectProtocol] = []
+
+    public init() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.menuOpen = true
+        })
+        observers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.menuOpen = false
+            if self.pendingChange { self.pendingChange = false; self.objectWillChange.send() }
+        })
+    }
+
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
     public var statusText: String {
         lock.lock()
@@ -220,12 +240,16 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
     }
 
     private func notifyChange() {
-        if Thread.isMainThread {
-            objectWillChange.send()
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.objectWillChange.send()
-            }
+        lock.lock()
+        let snapshot = "\(_statusText)|\(_iconState)|\(_devices)|\(String(describing: _currentDevice))|\(_isRunning)"
+        let changed = snapshot != lastSnapshot
+        lastSnapshot = snapshot
+        lock.unlock()
+        guard changed else { return }
+        let send = { [weak self] in
+            guard let self else { return }
+            if self.menuOpen { self.pendingChange = true } else { self.objectWillChange.send() }
         }
+        if Thread.isMainThread { send() } else { DispatchQueue.main.async(execute: send) }
     }
 }
