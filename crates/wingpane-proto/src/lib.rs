@@ -188,7 +188,10 @@ mod tests {
             ts_us: 1,
             event: InputEvent::Text(String::from("é".repeat(129))),
         });
-        assert_eq!(encode_frame(&packet, &mut Vec::new()), Err(FrameError::Encode));
+        assert_eq!(
+            encode_frame(&packet, &mut Vec::new()),
+            Err(FrameError::Encode)
+        );
     }
 }
 
@@ -321,7 +324,10 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
                 is_down: true,
             },
         ),
-        ("input_text", InputEvent::Text(String::from("Tiếng Việt 😀"))),
+        (
+            "input_text",
+            InputEvent::Text(String::from("Tiếng Việt 😀")),
+        ),
     ];
     for (name, event) in events {
         packets.push((
@@ -350,7 +356,9 @@ pub fn utf16_chunks(text: &str) -> alloc::vec::Vec<alloc::vec::Vec<u16>> {
         }
         current.extend_from_slice(units);
     }
-    if !current.is_empty() { chunks.push(current); }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
     chunks
 }
 

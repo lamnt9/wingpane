@@ -44,7 +44,8 @@ impl fmt::Display for FrameError {
 }
 
 pub fn encode_frame(p: &Packet, out: &mut Vec<u8>) -> Result<(), FrameError> {
-    if matches!(p, Packet::Input(InputPacket { event: InputEvent::Text(text), .. }) if text.len() > 256) {
+    if matches!(p, Packet::Input(InputPacket { event: InputEvent::Text(text), .. }) if text.len() > 256)
+    {
         return Err(FrameError::Encode);
     }
     let mut body = Vec::new();

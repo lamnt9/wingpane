@@ -15,6 +15,7 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
     private var startCount = 0
     private var moved = false
     private var dragging = false
+    private var lastTapUpAt = -1L
     private var scrollVelocityX = 0f; private var scrollVelocityY = 0f
     private var inertiaUntil = 0L
     private var gestureBaseDistance = 0f
@@ -30,6 +31,11 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
                 startAt=nowMs; lastAt=nowMs; count=pointers.size; startCount=pointers.size
                 startX=centroidX(pointers); startY=centroidY(pointers); lastX=startX; lastY=startY
                 moved=false; dragging=false; inertiaUntil=0
+                // Tap, then touch again within DOUBLE_TAP_MS: hold the button so moving drags ("tap-and-a-half").
+                if (pointers.size == 1 && lastTapUpAt >= 0 && nowMs - lastTapUpAt <= DOUBLE_TAP_MS) {
+                    out += InputEvent.MouseButton(0u, true); dragging = true
+                }
+                lastTapUpAt = -1L
                 gestureBaseDistance=distance(pointers); gestureSent=false
             }
             Action.Move -> if (pointers.isNotEmpty()) {
@@ -78,7 +84,7 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
                 if (dragging) out += InputEvent.MouseButton(0u,false)
                 else if (!moved && nowMs-startAt <= TAP_MS && startCount < 3) {
                     if (startCount == 2) { out += InputEvent.MouseButton(1u,true); out += InputEvent.MouseButton(1u,false) }
-                    else out += InputEvent.Gesture(io.wingpane.proto.GestureKind.Tap)
+                    else { out += InputEvent.Gesture(io.wingpane.proto.GestureKind.Tap); lastTapUpAt = nowMs }
                 }
                 if (startCount == 2 && moved) inertiaUntil=nowMs+INERTIA_MS
                 dragging=false; count=0
@@ -94,5 +100,5 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
         return listOf(InputEvent.Scroll(scrollVelocityX*decay,scrollVelocityY*decay))
     }
     private fun distance(p: List<PointerSample>): Float = if (p.size < 2) 0f else hypot(p[0].x-p[1].x,p[0].y-p[1].y)
-    companion object { const val TAP_MS=180L; const val TAP_SLOP_DP=8f; const val INERTIA_MS=325L; const val PINCH_STEP=0.15f }
+    companion object { const val TAP_MS=180L; const val DOUBLE_TAP_MS=300L; const val TAP_SLOP_DP=8f; const val INERTIA_MS=325L; const val PINCH_STEP=0.15f }
 }

@@ -37,7 +37,7 @@ Phạm vi: roadmap Phase 2 (docs/04) — Chế độ 2 *Graphics Tablet* (áp l�
 
 ## 2. Quyết định thiết kế chung
 
-* **D-1 Không đụng đường stream:** đổi mode **không** huỷ virtual display/capture. Display + capture sống suốt phiên; Android chỉ phủ UI mode lên trên `SurfaceView` (không gỡ `AndroidView`, không đổi z-order). Tạm dừng video là WP-10 tuỳ chọn, tách riêng.
+* **D-1 Không đụng đường stream Android:** Android giữ `SurfaceView` trong mọi mode. Khi client thương lượng `VIDEO_SUSPEND`, host gỡ virtual display và capture ở control mode, rồi tạo lại khi trở về Display (WP-10).
 * **D-2 Bút ở chế độ Display = "Sidecar-like":** pen vẽ trực tiếp lên màn ảo (toạ độ theo `CGDisplayBounds(virtualDisplay)`). Chế độ GraphicsTablet: pen map lên **màn hình đích** (mặc định `CGMainDisplayID()`, aspect-fit), tablet hiện canvas đen.
 * **D-3 Cử chỉ trackpad diễn giải trên Android** (đã có `PointerDelta/Scroll/Gesture` trong proto), host chỉ inject. Không làm `wingpane-core/gesture.rs` ở Phase 2 (ADR-005: Kotlin trước, dùng chung khi có Windows).
 * **D-4 Đường cong áp lực áp ở host** bằng `wingpane_core::pen::apply_pressure_curve` (một nguồn sự thật, Windows dùng lại). Android chỉ gửi pressure thô 0..1.
@@ -168,7 +168,7 @@ Ký hiệu file: `proto/` = `crates/wingpane-proto/src/`, `wpd/` = `apps/desktop
 * **Chấp nhận:** Pen mode: băng thông ≈ 0; về Display hình xuất hiện ≤ 300 ms, không xanh/vỡ.
 * **Test:** Rust test cho hàm chọn frame (`should_send(mode, awaiting_key)`); thủ công P11 lặp 20 lần.
 * **Rủi ro:** chạm đúng đường stream → làm **cuối cùng**, chỉ sau khi WP-4 ổn định; nếu hỏng thì revert riêng commit này.
-* **Trạng thái:** Done — host chỉ bỏ frame ngoài Display khi client quảng bá `VIDEO_SUSPEND`; khi trở lại Display yêu cầu keyframe.
+* **Trạng thái:** Done — khi client quảng bá `VIDEO_SUSPEND`, host gỡ virtual display và dừng capture ngoài Display; khi trở lại Display tạo lại display/capture và yêu cầu keyframe. Writer vẫn bỏ frame ngoài Display.
 
 ### 3.1 Thứ tự & phụ thuộc
 

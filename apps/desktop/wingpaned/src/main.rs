@@ -5,7 +5,7 @@ use std::{
     ffi::c_void,
     path::Path,
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -25,6 +25,7 @@ struct CallbackContext {
     queue: Arc<FrameQueue>,
     latency: Arc<LatencyWindow>,
     handle: AtomicU64,
+    video_enabled: AtomicBool,
     encoded: AtomicU64,
     backlog_dropped: AtomicU64,
 }
@@ -89,6 +90,9 @@ unsafe extern "C" fn on_frame(
         return;
     }
     let ctx = unsafe { &*(ctx.cast::<CallbackContext>()) };
+    if !ctx.video_enabled.load(Ordering::Acquire) {
+        return;
+    }
     ctx.encoded.fetch_add(1, Ordering::Relaxed);
     let bytes = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
     let encode_done_us = ffi::host_time_us();
@@ -161,7 +165,43 @@ impl Drop for DisconnectLog {
         }
     }
 }
-struct NativeInputSink(u32);
+struct NativeInputSink(Arc<AtomicU32>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DisplayTransition {
+    None,
+    Remove,
+    Create,
+}
+
+fn display_transition(prev: Mode, next: Mode, suspend_supported: bool) -> DisplayTransition {
+    if !suspend_supported {
+        return DisplayTransition::None;
+    }
+    match (prev == Mode::ExtendedDisplay, next == Mode::ExtendedDisplay) {
+        (true, false) => DisplayTransition::Remove,
+        (false, true) => DisplayTransition::Create,
+        _ => DisplayTransition::None,
+    }
+}
+
+struct CaptureSlot(Arc<Mutex<Option<ffi::Capture>>>);
+impl wingpaned::CaptureSource for CaptureSlot {
+    fn force_keyframe(&self) {
+        if let Some(c) = self.0.lock().unwrap().as_ref() {
+            c.force_keyframe();
+        }
+    }
+    fn stop(&self) {
+        self.0.lock().unwrap().take();
+    }
+}
+struct DisplaySlot(Arc<Mutex<Option<ffi::VirtualDisplay>>>);
+impl wingpaned::DisplayResource for DisplaySlot {
+    fn destroy(&self) {
+        self.0.lock().unwrap().take();
+    }
+}
 const FEATURE_PEN_PRESSURE: u32 = 1 << 0;
 const FEATURE_POINTER_RELATIVE: u32 = 1 << 1;
 const FEATURE_GESTURE: u32 = 1 << 2;
@@ -182,6 +222,30 @@ fn should_send_video(mode: Mode, awaiting_key: bool, frame_is_key: bool) -> bool
 }
 
 #[cfg(test)]
+mod display_transition_tests {
+    use super::*;
+    #[test]
+    fn transition_requires_negotiated_suspend_and_crossing_display_boundary() {
+        assert_eq!(
+            display_transition(Mode::ExtendedDisplay, Mode::GraphicsTablet, true),
+            DisplayTransition::Remove
+        );
+        assert_eq!(
+            display_transition(Mode::TrackpadKeyboard, Mode::ExtendedDisplay, true),
+            DisplayTransition::Create
+        );
+        assert_eq!(
+            display_transition(Mode::GraphicsTablet, Mode::TrackpadKeyboard, true),
+            DisplayTransition::None
+        );
+        assert_eq!(
+            display_transition(Mode::ExtendedDisplay, Mode::GraphicsTablet, false),
+            DisplayTransition::None
+        );
+    }
+}
+
+#[cfg(test)]
 mod video_suspend_tests {
     use super::*;
 
@@ -196,7 +260,14 @@ mod video_suspend_tests {
 }
 impl InputSink for NativeInputSink {
     fn pointer(&self, x: f32, y: f32, phase: TouchPhase) {
-        unsafe { wp_input_pointer(self.0, f64::from(x), f64::from(y), phase as u8) };
+        unsafe {
+            wp_input_pointer(
+                self.0.load(Ordering::Acquire),
+                f64::from(x),
+                f64::from(y),
+                phase as u8,
+            )
+        };
     }
     fn release_all(&self) {
         unsafe { wp_input_release_all() }
@@ -214,7 +285,14 @@ impl InputSink for NativeInputSink {
         }
         unsafe {
             wp_input_pen(
-                self.0,
+                {
+                    let id = self.0.load(Ordering::Acquire);
+                    if id == 0 {
+                        wp_main_display_id()
+                    } else {
+                        id
+                    }
+                },
                 f64::from(sample.x),
                 f64::from(sample.y),
                 f64::from(sample.pressure),
@@ -885,6 +963,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
         queue: queue.clone(),
         latency: latency.clone(),
         handle: AtomicU64::new(0),
+        video_enabled: AtomicBool::new(true),
         encoded: AtomicU64::new(0),
         backlog_dropped: AtomicU64::new(0),
     });
@@ -919,10 +998,13 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
             .handle
             .store(capture.handle(), Ordering::Relaxed);
     }
+    let display_id = Arc::new(AtomicU32::new(display.id()));
+    let capture_slot = Arc::new(Mutex::new(Some(capture)));
+    let display_slot = Arc::new(Mutex::new(Some(display)));
     let mut resources = SessionResources {
-        capture: Box::new(capture),
-        input: Box::new(NativeInputSink(display.id())),
-        display: Box::new(display),
+        capture: Box::new(CaptureSlot(capture_slot.clone())),
+        input: Box::new(NativeInputSink(display_id.clone())),
+        display: Box::new(DisplaySlot(display_slot.clone())),
     };
     if status_json {
         emit_status(StatusEvent::Streaming {
@@ -936,6 +1018,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
     let stats_queue = queue.clone();
     let stats_latency = latency.clone();
     let writer_latency = latency.clone();
+    let writer_queue = queue.clone();
     let stats_sent = Arc::new(AtomicU64::new(0));
     let writer_sent = stats_sent.clone();
     let shared_mode = Arc::new(AtomicU8::new(0));
@@ -957,7 +1040,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
         loop {
             tokio::select! { biased;
                 Some(p) = control_rx.recv() => if writer.send(&p).await.is_err() { break; },
-                frame = queue.pop() => {
+                frame = writer_queue.pop() => {
                     let mode = match writer_mode.load(Ordering::Acquire) {
                         1 => Mode::GraphicsTablet,
                         2 => Mode::TrackpadKeyboard,
@@ -1040,23 +1123,72 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                     ControlMessage::SetMode(next_mode) => {
                         let previous_mode = input_router.mode();
                         input_router.set_mode(next_mode);
-                        if next_mode == Mode::ExtendedDisplay && previous_mode != Mode::ExtendedDisplay {
-                            if client_video_suspend.load(Ordering::Acquire) {
+                        shared_mode.store(
+                            match next_mode {
+                                Mode::ExtendedDisplay => 0,
+                                Mode::GraphicsTablet => 1,
+                                Mode::TrackpadKeyboard => 2,
+                            },
+                            Ordering::Release,
+                        );
+                        if status_json {
+                            emit_status(StatusEvent::Mode { mode: next_mode });
+                        }
+                        let suspend = client_video_suspend.load(Ordering::Acquire);
+                        match display_transition(previous_mode, next_mode, suspend) {
+                            DisplayTransition::Remove => {
+                                let ctx = unsafe { &*(context_addr as *const CallbackContext) };
+                                ctx.video_enabled.store(false, Ordering::Release);
+                                display_id.store(0, Ordering::Release);
+                                capture_slot.lock().unwrap().take();
+                                display_slot.lock().unwrap().take();
+                                queue.clear();
+                            }
+                            DisplayTransition::Create => {
+                                let recreated = (|| -> Result<(), String> {
+                                    let new_display = ffi::VirtualDisplay::create(
+                                        logical_w, logical_h, hz, opts.hidpi,
+                                    )?;
+                                    let new_capture = unsafe {
+                                        ffi::Capture::start(
+                                            new_display.id(),
+                                            client_w,
+                                            client_h,
+                                            hz,
+                                            bitrate,
+                                            on_frame,
+                                            (context_addr as *mut CallbackContext).cast(),
+                                        )?
+                                    };
+                                    let handle = new_capture.handle();
+                                    *display_slot.lock().unwrap() = Some(new_display);
+                                    *capture_slot.lock().unwrap() = Some(new_capture);
+                                    display_id.store(
+                                        display_slot.lock().unwrap().as_ref().unwrap().id(),
+                                        Ordering::Release,
+                                    );
+                                    let ctx = unsafe { &*(context_addr as *const CallbackContext) };
+                                    ctx.handle.store(handle, Ordering::Release);
+                                    ctx.video_enabled.store(true, Ordering::Release);
+                                    Ok(())
+                                })();
+                                if let Err(e) = recreated {
+                                    eprintln!("virtual display recreation failed: {e}");
+                                    end_log.reason = "display recreation failed".into();
+                                    if status_json {
+                                        emit_status(StatusEvent::Error { message: e });
+                                    }
+                                    break;
+                                }
                                 awaiting_key.store(true, Ordering::Release);
                                 let handle = unsafe { &*(context_addr as *const CallbackContext) }
-                                    .handle.load(Ordering::Relaxed);
+                                    .handle
+                                    .load(Ordering::Acquire);
                                 if handle != 0 {
                                     unsafe { request_keyframe(handle) };
                                 }
                             }
-                        }
-                        shared_mode.store(match next_mode {
-                            Mode::ExtendedDisplay => 0,
-                            Mode::GraphicsTablet => 1,
-                            Mode::TrackpadKeyboard => 2,
-                        }, Ordering::Release);
-                        if status_json {
-                            emit_status(StatusEvent::Mode { mode: next_mode });
+                            DisplayTransition::None => {}
                         }
                         continue;
                     }

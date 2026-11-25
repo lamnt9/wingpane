@@ -55,5 +55,5 @@ File này lưu trữ các quyết định kiến trúc quan trọng của dự �
 
 ## [ADR-007] 2026-11-25: Giữ stream khi đổi chế độ input
 * **Trạng thái:** Đã chốt trong kế hoạch Phase 2 (`docs/06-pen-trackpad-plan.md`).
-* **Quyết định:** Đổi mode không hủy virtual display hoặc capture (D-1). Áp đường cong pressure ở host làm nguồn thống nhất (D-4). Chỉ gửi tính năng sau capabilities (D-6), với `INPUT_TRUSTED` phản ánh Accessibility.
-* **Hệ quả:** Display stream tiếp tục chạy trong lúc host đổi cách định tuyến input; xử lý dữ liệu chuẩn hóa ở host.
+* **Quyết định:** Android giữ stream surface qua đổi mode. Nếu client quảng bá `VIDEO_SUSPEND`, host gỡ virtual display và capture khi vào control mode, tạo lại khi quay về Display; nếu không, giữ hành vi hiện tại (D-1). Áp đường cong pressure ở host làm nguồn thống nhất (D-4). Chỉ gửi tính năng sau capabilities (D-6), với `INPUT_TRUSTED` phản ánh Accessibility.
+* **Hệ quả:** Display stream chỉ tạm ngừng phía host khi client hỗ trợ; khi tạo lại, host yêu cầu keyframe. Input bút không dùng ID display cũ.

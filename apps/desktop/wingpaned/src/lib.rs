@@ -81,6 +81,9 @@ impl FrameQueue {
     pub fn is_empty(&self) -> bool {
         self.frames.lock().expect("frame queue poisoned").is_empty()
     }
+    pub fn clear(&self) {
+        self.frames.lock().expect("frame queue poisoned").clear();
+    }
     pub fn dropped_frames(&self) -> u64 {
         self.dropped_frames.load(Ordering::Relaxed)
     }

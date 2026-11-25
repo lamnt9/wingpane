@@ -13,6 +13,17 @@ class TrackpadGestureDetectorTest {
         d.onTouch(TrackpadGestureDetector.Action.Down,listOf(p(0f)),200)
         assertTrue(d.onTouch(TrackpadGestureDetector.Action.Move,listOf(p(12f)),220).single() is InputEvent.PointerDelta)
     }
+    @Test fun tapThenTouchAndMoveDragsAndAlwaysReleases() {
+        val d=TrackpadGestureDetector(); d.onTouch(TrackpadGestureDetector.Action.Down,listOf(p(0f)),0)
+        d.onTouch(TrackpadGestureDetector.Action.Up,listOf(p(0f)),80)
+        assertEquals(listOf(InputEvent.MouseButton(0u,true)), d.onTouch(TrackpadGestureDetector.Action.Down,listOf(p(0f)),200))
+        assertEquals(listOf(InputEvent.PointerDelta(30f,0f)), d.onTouch(TrackpadGestureDetector.Action.Move,listOf(p(30f)),230))
+        assertEquals(listOf(InputEvent.MouseButton(0u,false)), d.onTouch(TrackpadGestureDetector.Action.Up,emptyList(),400))
+        // A touch long after the tap is a normal move, not a drag.
+        d.onTouch(TrackpadGestureDetector.Action.Down,listOf(p(0f)),1000)
+        d.onTouch(TrackpadGestureDetector.Action.Up,listOf(p(0f)),1050)
+        assertTrue(d.onTouch(TrackpadGestureDetector.Action.Down,listOf(p(0f)),1500).isEmpty())
+    }
     @Test fun twoFingerTapProducesRightClick() {
         val d=TrackpadGestureDetector(); d.onTouch(TrackpadGestureDetector.Action.Down,listOf(p(0f)),0)
         d.onTouch(TrackpadGestureDetector.Action.Move,listOf(p(0f),p(0f,12f,1)),40)
