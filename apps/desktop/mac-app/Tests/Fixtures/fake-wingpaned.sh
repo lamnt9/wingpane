@@ -8,7 +8,16 @@ if [ -n "$FAKE_DAEMON_ADB_FILE" ]; then
     printf "%s" "$WINGPANE_ADB" > "$FAKE_DAEMON_ADB_FILE"
 fi
 
+STDIN_PID=""
+if [ -n "$FAKE_DAEMON_STDIN_FILE" ]; then
+    /bin/cat > "$FAKE_DAEMON_STDIN_FILE" 2>/dev/null &
+    STDIN_PID=$!
+fi
+
 on_sigint() {
+    if [ -n "$STDIN_PID" ]; then
+        kill "$STDIN_PID" 2>/dev/null || true
+    fi
     if [ -n "$FAKE_DAEMON_SIGNAL_FILE" ]; then
         printf "SIGINT" > "$FAKE_DAEMON_SIGNAL_FILE"
     fi
