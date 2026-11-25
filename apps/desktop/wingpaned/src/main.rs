@@ -119,6 +119,7 @@ unsafe extern "C" {
     fn wp_input_pointer(display_id: u32, x: f64, y: f64, phase: u8);
     fn wp_input_release_all();
     fn wp_input_trusted() -> bool;
+    fn wp_screen_capture_trusted() -> bool;
 }
 struct TestPatternGuard(Option<u32>);
 impl Drop for TestPatternGuard {
@@ -332,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             _ = ui_tick.tick(), if opts.test_pattern => unsafe { wp_test_pattern_pump() },
             _ = async { #[cfg(unix)] { tokio::select! { _ = sigint.recv() => (), _ = sigterm.recv() => () } } #[cfg(not(unix))] { let _ = tokio::signal::ctrl_c().await; } } => { eprintln!("shutdown signal received"); sessions.abort_all(); while sessions.join_next().await.is_some() {} break; },
-            _ = async { tokio::time::sleep(Duration::from_secs(1)).await; if_parent_dead() }, if opts.status_json => { eprintln!("parent process exited"); sessions.abort_all(); while sessions.join_next().await.is_some() {} break; },
+            _ = async { loop { tokio::time::sleep(Duration::from_secs(1)).await; if if_parent_dead() { break; } } }, if opts.status_json => { eprintln!("parent process exited"); sessions.abort_all(); while sessions.join_next().await.is_some() {} break; },
             result = listener.accept() => {
                 let (stream, peer) = result?;
                 if !sessions.is_empty() {
@@ -680,6 +681,21 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
     };
     if let ControlMessage::Accept { bitrate_kbps, .. } = &mut reply.send {
         *bitrate_kbps = opts.bitrate / 1_000;
+    }
+    if !unsafe { wp_screen_capture_trusted() } {
+        end_log.reason = "screen recording permission missing".into();
+        eprintln!("Screen Recording permission missing: System Settings › Privacy & Security › Screen & System Audio Recording → enable Wingpane");
+        if status_json {
+            emit_status(StatusEvent::Error {
+                message: "Screen Recording permission missing".to_owned(),
+            });
+        }
+        let _ = framed
+            .send(&Packet::Control(ControlMessage::Reject(
+                RejectReason::ScreenRecordingDenied,
+            )))
+            .await;
+        return;
     }
     let (client_w, client_h) = dims;
     let logical_w = if opts.hidpi { client_w / 2 } else { client_w };

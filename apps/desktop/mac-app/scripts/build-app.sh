@@ -64,9 +64,16 @@ cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
 </plist>
 EOF
 
-# Sign the nested daemon first, then the bundle (ad-hoc; local use only).
-codesign --force -s - "$RESOURCES_DIR/wingpaned"
-codesign --force -s - "$APP_BUNDLE"
+# Sign the nested daemon first, then the bundle. A stable identity keeps the macOS
+# Screen Recording / Accessibility grants across rebuilds (ad-hoc re-prompts every build).
+# Override with SIGN_ID=<sha1 or name>; falls back to ad-hoc ("-") if the identity is missing.
+SIGN_ID="${SIGN_ID:-88072D8B9AD80A9236B591484514851F88DB5F87}"
+if ! security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
+    echo "⚠ signing identity $SIGN_ID not found, using ad-hoc" >&2
+    SIGN_ID="-"
+fi
+codesign --force -s "$SIGN_ID" "$RESOURCES_DIR/wingpaned"
+codesign --force -s "$SIGN_ID" "$APP_BUNDLE"
 codesign --verify --strict --deep "$APP_BUNDLE"
 echo "✔ $APP_BUNDLE"
 

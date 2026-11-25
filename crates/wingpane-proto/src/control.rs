@@ -47,6 +47,8 @@ pub enum RejectReason {
     UnsupportedCodec,
     InvalidHello,
     Busy,
+    /// Host lacks macOS Screen Recording permission. Appended last to keep the wire format stable.
+    ScreenRecordingDenied,
 }
 
 /// Supported low-latency video codecs.

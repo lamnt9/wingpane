@@ -47,6 +47,7 @@ mod tests {
             ControlMessage::Reject(RejectReason::UnsupportedCodec),
             ControlMessage::Reject(RejectReason::InvalidHello),
             ControlMessage::Reject(RejectReason::Busy),
+            ControlMessage::Reject(RejectReason::ScreenRecordingDenied),
         ];
         for c in controls {
             roundtrip(Packet::Control(c));

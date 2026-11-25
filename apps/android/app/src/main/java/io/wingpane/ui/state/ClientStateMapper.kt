@@ -234,6 +234,18 @@ object ClientStateMapper {
                 liveRegion = LiveRegionPoliteness.POLITE,
             )
 
+            RejectReason.ScreenRecordingDenied -> ScreenUiModel(
+                screenId = ScreenId.S5D_HANDSHAKE_FAILED,
+                title = "Your Mac needs Screen Recording permission.",
+                body = "Open System Settings › Privacy & Security › Screen & System Audio Recording and enable Wingpane, then try again.",
+                briefCopy = "Mac needs Screen Recording permission.",
+                primaryActionLabel = "Try again",
+                secondaryActionLabel = null,
+                badgeLabel = "PERMISSION",
+                severity = StatusSeverity.WARNING,
+                liveRegion = LiveRegionPoliteness.POLITE,
+            )
+
             RejectReason.InvalidHello -> s5dHandshakeFailed()
         }
     }

@@ -76,6 +76,9 @@ private final class PointerState: @unchecked Sendable {
     }
 }
 
+@_cdecl("wp_screen_capture_trusted")
+public func wp_screen_capture_trusted() -> Bool { CGPreflightScreenCaptureAccess() }
+
 @_cdecl("wp_input_trusted")
 public func wp_input_trusted() -> Bool { AXIsProcessTrusted() }
 

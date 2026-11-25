@@ -11,7 +11,7 @@ const val MAX_FRAME_LEN = 8 * 1024 * 1024
 enum class Mode { ExtendedDisplay, GraphicsTablet, TrackpadKeyboard }
 enum class VideoCodec { H264, Hevc }
 enum class TouchPhase { Down, Move, Up, Cancel }
-enum class RejectReason { VersionMismatch, UnsupportedCodec, InvalidHello, Busy }
+enum class RejectReason { VersionMismatch, UnsupportedCodec, InvalidHello, Busy, ScreenRecordingDenied }
 sealed interface GestureKind {
     data object Tap : GestureKind
     data object TwoFingerTap : GestureKind
@@ -122,7 +122,7 @@ private object Codec {
         0->{val ver=r.varint().toUShort();val name=r.string();val size=r.varint().toUInt() to r.varint().toUInt();val codecs=List(r.count()){codec(r)};ControlMessage.Hello(ver,name,size,codecs,r.varint().toUInt())}
         1->{val m=mode(r);val has=r.byte();val s=when(has){0->null;1->Triple(r.varint().toUInt(),r.varint().toUInt(),r.varint().toUInt());else->throw FrameException("invalid option")};ControlMessage.Accept(m,s,codec(r),r.varint().toUInt())}
         2->ControlMessage.SetMode(mode(r));3->ControlMessage.RequestKeyframe;4->ControlMessage.Ping(r.varint());5->ControlMessage.Pong(r.varint());6->ControlMessage.Disconnect
-        7->{val reason=RejectReason.entries[r.enum(0,3)];ControlMessage.Reject(reason,if(reason==RejectReason.VersionMismatch)r.varint().toUShort() else null)}
+        7->{val reason=RejectReason.entries[r.enum(0,4)];ControlMessage.Reject(reason,if(reason==RejectReason.VersionMismatch)r.varint().toUShort() else null)}
         else->ControlMessage.HostTime(r.varint(),r.varint())
     }
     private fun decodeInput(r:Reader):InputPacket {val seq=r.varint().toUInt();val ts=r.varint();val e=when(r.enum(0,5)){
