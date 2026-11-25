@@ -1,4 +1,6 @@
 <resources>
+    <string name="uc_accessibility_service_name">Wingpane universal control</string>
+    <string name="uc_accessibility_service_description">Lets a connected computer control taps and gestures on this tablet. Some banking apps may block use while an Accessibility service is enabled.</string>
     <string name="app_name">Wingpane</string>
     <string name="footer_version">Wingpane v0.1 · Protocol v1</string>
     <string name="protocol_v1">Protocol v1</string>

@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <activity android:name=".debug.SamplePlaybackActivity" android:exported="true" android:screenOrientation="sensorLandscape" />
+        <receiver android:name=".uc.UcDebugReceiver" android:exported="true"><intent-filter><action android:name="io.wingpane.debug.UC" /></intent-filter></receiver>
+        <activity android:name=".uc.UcProbeActivity" android:exported="true" android:label="UC latency probe" />
     </application>
 </manifest>
