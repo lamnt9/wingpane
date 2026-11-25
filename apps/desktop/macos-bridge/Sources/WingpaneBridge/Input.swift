@@ -7,6 +7,8 @@ final class PointerState: @unchecked Sendable {
     private let lock = NSLock()
     private var buttonDown = false
     private var lastLocation = CGPoint.zero
+    private var lastClickAt = Date.distantPast
+    private var clickCount = 0
     private(set) var droppedUntrusted: UInt64 = 0
 
     func releaseAll() {
@@ -15,6 +17,41 @@ final class PointerState: @unchecked Sendable {
         if AXIsProcessTrusted() { postPointerEvent(.leftMouseUp, at: lastLocation) }
         else { droppedUntrusted &+= 1 }
         buttonDown = false
+    }
+    func relative(_ dx: Double, _ dy: Double) {
+        lock.lock(); defer { lock.unlock() }
+        guard AXIsProcessTrusted(), let current = CGEvent(source: nil)?.location else { return }
+        let screens = (0..<16).map { UInt32($0) }
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: screens.count)
+        guard CGGetActiveDisplayList(UInt32(ids.count), &ids, &count) == .success else { return }
+        let bounds = ids.prefix(Int(count)).map { CGDisplayBounds($0) }
+        guard let union = bounds.first.map({ first in bounds.dropFirst().reduce(first) { $0.union($1) } }) else { return }
+        let point = CGPoint(x: min(max(current.x + dx, union.minX), union.maxX - 1), y: min(max(current.y + dy, union.minY), union.maxY - 1))
+        let type: CGEventType = buttonDown ? .leftMouseDragged : .mouseMoved
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { return }
+        event.setIntegerValueField(CGEventField.mouseEventDeltaX, value: Int64(dx.rounded()))
+        event.setIntegerValueField(CGEventField.mouseEventDeltaY, value: Int64(dy.rounded()))
+        event.post(tap: CGEventTapLocation.cghidEventTap)
+        lastLocation = point
+    }
+    func button(_ button: UInt8, _ down: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        guard AXIsProcessTrusted(), let point = CGEvent(source: nil)?.location else { return }
+        let type: CGEventType = button == 1 ? (down ? .rightMouseDown : .rightMouseUp) : (down ? .leftMouseDown : .leftMouseUp)
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: button == 1 ? .right : .left) else { return }
+        if down {
+            let now = Date()
+            clickCount = now.timeIntervalSince(lastClickAt) <= 0.5 ? min(clickCount + 1, 2) : 1
+            lastClickAt = now
+        }
+        event.setIntegerValueField(.mouseEventClickState, value: Int64(max(clickCount, 1)))
+        event.post(tap: .cghidEventTap)
+        if button == 0 { buttonDown = down; lastLocation = point }
+    }
+    func scroll(_ dx: Double, _ dy: Double) {
+        guard AXIsProcessTrusted(), let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else { return }
+        event.post(tap: .cghidEventTap)
     }
 
     func post(displayID: UInt32, x: Double, y: Double, phase: UInt8) {

@@ -35,6 +35,11 @@ pub enum InputEvent {
         is_down: bool,
         modifiers: u8,
     },
+    /// Mouse button state; appended as input tag 6.
+    MouseButton {
+        button: u8,
+        is_down: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

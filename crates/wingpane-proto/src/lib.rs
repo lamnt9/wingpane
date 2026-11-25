@@ -85,6 +85,10 @@ mod tests {
                 is_down: true,
                 modifiers: 2,
             },
+            InputEvent::MouseButton {
+                button: 0,
+                is_down: true,
+            },
         ];
         for e in events {
             roundtrip(Packet::Input(InputPacket {
@@ -276,6 +280,13 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
                 usb_hid_usage: 0x1234,
                 is_down: true,
                 modifiers: 5,
+            },
+        ),
+        (
+            "input_mouse_button",
+            InputEvent::MouseButton {
+                button: 0,
+                is_down: true,
             },
         ),
     ];

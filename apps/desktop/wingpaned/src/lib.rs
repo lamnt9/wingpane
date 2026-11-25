@@ -103,6 +103,9 @@ pub trait InputSink: Send {
     fn pointer(&self, x: f32, y: f32, phase: wingpane_proto::TouchPhase);
     fn release_all(&self);
     fn pen(&self, _sample: PenSample) {}
+    fn pen_main(&self, sample: PenSample) {
+        self.pen(sample);
+    }
     fn relative(&self, _dx: f32, _dy: f32) {}
     fn button(&self, _button: u8, _is_down: bool) {}
     fn scroll(&self, _dx: f32, _dy: f32) {}
@@ -155,19 +158,26 @@ impl<'a> InputRouter<'a> {
                 is_hover,
                 button_mask,
                 ..
-            } if self.mode == Mode::ExtendedDisplay => self.sink.pen(PenSample {
-                x,
-                y,
-                pressure: wingpane_core::pen::apply_pressure_curve(
-                    pressure,
-                    &[0.25, 0.25, 0.75, 0.75],
-                ),
-                tilt_x,
-                tilt_y,
-                is_down,
-                is_hover,
-                button_mask,
-            }),
+            } if self.mode == Mode::ExtendedDisplay || self.mode == Mode::GraphicsTablet => {
+                let sample = PenSample {
+                    x,
+                    y,
+                    pressure: wingpane_core::pen::apply_pressure_curve(
+                        pressure,
+                        &[0.25, 0.25, 0.75, 0.75],
+                    ),
+                    tilt_x,
+                    tilt_y,
+                    is_down,
+                    is_hover,
+                    button_mask,
+                };
+                if self.mode == Mode::GraphicsTablet {
+                    self.sink.pen_main(sample)
+                } else {
+                    self.sink.pen(sample)
+                }
+            }
             InputEvent::PointerDelta { dx, dy } if self.mode == Mode::TrackpadKeyboard => {
                 self.sink.relative(dx, dy)
             }
@@ -180,6 +190,21 @@ impl<'a> InputRouter<'a> {
                 modifiers,
             } if self.mode == Mode::TrackpadKeyboard => {
                 self.sink.key(usb_hid_usage, is_down, modifiers)
+            }
+            InputEvent::MouseButton { button, is_down } if self.mode == Mode::TrackpadKeyboard => {
+                self.sink.button(button, is_down)
+            }
+            InputEvent::Gesture(wingpane_proto::GestureKind::Tap)
+                if self.mode == Mode::TrackpadKeyboard =>
+            {
+                self.sink.button(0, true);
+                self.sink.button(0, false)
+            }
+            InputEvent::Gesture(wingpane_proto::GestureKind::TwoFingerTap)
+                if self.mode == Mode::TrackpadKeyboard =>
+            {
+                self.sink.button(1, true);
+                self.sink.button(1, false)
             }
             _ => return false,
         }
@@ -227,6 +252,7 @@ pub fn handle_input(sink: &dyn InputSink, packet: wingpane_proto::InputPacket) -
         InputEvent::PointerDelta { dx, dy } => sink.relative(dx, dy),
         InputEvent::Scroll { dx, dy } => sink.scroll(dx, dy),
         InputEvent::Gesture(_) => return false,
+        InputEvent::MouseButton { .. } => return false,
         InputEvent::Keyboard {
             usb_hid_usage,
             is_down,
@@ -504,6 +530,67 @@ mod tests {
         assert_eq!(
             *sink.0.lock().unwrap(),
             ["pointer", "release", "mode", "relative"]
+        );
+    }
+
+    #[test]
+    fn graphics_tablet_routes_pen_to_main_target_and_trackpad_routes_mouse_inputs() {
+        struct Recording(Mutex<Vec<&'static str>>);
+        impl InputSink for Recording {
+            fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {}
+            fn release_all(&self) {}
+            fn pen(&self, _: PenSample) {
+                self.0.lock().unwrap().push("virtual_pen");
+            }
+            fn pen_main(&self, _: PenSample) {
+                self.0.lock().unwrap().push("main_pen");
+            }
+            fn relative(&self, _: f32, _: f32) {
+                self.0.lock().unwrap().push("move");
+            }
+            fn scroll(&self, _: f32, _: f32) {
+                self.0.lock().unwrap().push("scroll");
+            }
+            fn button(&self, _: u8, _: bool) {
+                self.0.lock().unwrap().push("button");
+            }
+        }
+        let mut sink = Recording(Mutex::new(Vec::new()));
+        let mut router = InputRouter::new(wingpane_proto::Mode::GraphicsTablet, &mut sink);
+        let pen = wingpane_proto::InputPacket {
+            seq: 1,
+            ts_us: 1,
+            event: wingpane_proto::InputEvent::Pen {
+                x: 0.4,
+                y: 0.5,
+                pressure: 0.3,
+                tilt_x: 0,
+                tilt_y: 0,
+                is_down: true,
+                is_hover: false,
+                button_mask: 0,
+                timestamp_us: 1,
+            },
+        };
+        assert!(router.handle_input(pen));
+        router.set_mode(wingpane_proto::Mode::TrackpadKeyboard);
+        for event in [
+            wingpane_proto::InputEvent::PointerDelta { dx: 1.0, dy: 2.0 },
+            wingpane_proto::InputEvent::Scroll { dx: 3.0, dy: 4.0 },
+            wingpane_proto::InputEvent::MouseButton {
+                button: 0,
+                is_down: true,
+            },
+        ] {
+            assert!(router.handle_input(wingpane_proto::InputPacket {
+                seq: 2,
+                ts_us: 2,
+                event
+            }));
+        }
+        assert_eq!(
+            *sink.0.lock().unwrap(),
+            ["main_pen", "move", "scroll", "button"]
         );
     }
 

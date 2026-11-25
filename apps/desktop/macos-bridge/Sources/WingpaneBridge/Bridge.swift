@@ -66,6 +66,18 @@ public func wp_input_pointer(_ displayID: UInt32, _ x: Double, _ y: Double, _ ph
     PointerState.shared.post(displayID: displayID, x: x, y: y, phase: phase)
 }
 
+@_cdecl("wp_main_display_id")
+public func wp_main_display_id() -> UInt32 { CGMainDisplayID() }
+
+@_cdecl("wp_input_relative")
+public func wp_input_relative(_ dx: Double, _ dy: Double) { PointerState.shared.relative(dx, dy) }
+
+@_cdecl("wp_input_button")
+public func wp_input_button(_ button: UInt8, _ down: Bool) { PointerState.shared.button(button, down) }
+
+@_cdecl("wp_input_scroll")
+public func wp_input_scroll(_ dx: Double, _ dy: Double) { PointerState.shared.scroll(dx, dy) }
+
 @_cdecl("wp_input_pen")
 public func wp_input_pen(_ displayID: UInt32, _ x: Double, _ y: Double, _ pressure: Double,
                          _ tiltX: Double, _ tiltY: Double, _ buttons: UInt8, _ flags: UInt8) {

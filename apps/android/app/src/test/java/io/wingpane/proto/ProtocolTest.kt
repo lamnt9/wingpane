@@ -31,6 +31,7 @@ class ProtocolTest {
             "input_scroll" to Packet.Input(InputPacket(base,ts,InputEvent.Scroll(1.5f,-2.75f))),
             "input_gesture" to Packet.Input(InputPacket(base,ts,InputEvent.Gesture(GestureKind.PinchZoom(1.25f)))),
             "input_keyboard" to Packet.Input(InputPacket(base,ts,InputEvent.Keyboard(0x1234u,true,5u))),
+            "input_mouse_button" to Packet.Input(InputPacket(base,ts,InputEvent.MouseButton(0u,true))),
         )
     }
 

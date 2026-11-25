@@ -127,6 +127,10 @@ unsafe extern "C" {
         buttons: u8,
         flags: u8,
     );
+    fn wp_main_display_id() -> u32;
+    fn wp_input_relative(dx: f64, dy: f64);
+    fn wp_input_button(button: u8, down: bool);
+    fn wp_input_scroll(dx: f64, dy: f64);
     fn wp_input_release_all();
     fn wp_input_trusted() -> bool;
     fn wp_screen_capture_trusted() -> bool;
@@ -184,6 +188,42 @@ impl InputSink for NativeInputSink {
                 sample.button_mask,
                 flags,
             )
+        }
+    }
+    fn pen_main(&self, sample: wingpaned::PenSample) {
+        let mut flags = if sample.is_down { 1 } else { 0 };
+        if sample.is_hover {
+            flags |= 2;
+        }
+        if !sample.is_down && !sample.is_hover {
+            flags |= 4;
+        }
+        unsafe {
+            wp_input_pen(
+                wp_main_display_id(),
+                f64::from(sample.x),
+                f64::from(sample.y),
+                f64::from(sample.pressure),
+                f64::from(sample.tilt_x),
+                f64::from(sample.tilt_y),
+                sample.button_mask,
+                flags,
+            );
+        }
+    }
+    fn relative(&self, dx: f32, dy: f32) {
+        unsafe {
+            wp_input_relative(f64::from(dx), f64::from(dy));
+        }
+    }
+    fn button(&self, button: u8, down: bool) {
+        unsafe {
+            wp_input_button(button, down);
+        }
+    }
+    fn scroll(&self, dx: f32, dy: f32) {
+        unsafe {
+            wp_input_scroll(f64::from(dx), f64::from(dy));
         }
     }
 }
@@ -906,7 +946,9 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                     ControlMessage::Capabilities { .. } => {
                         client_capabilities_seen = true;
                         ControlMessage::Capabilities {
-                            features: FEATURE_PEN_PRESSURE | if input_trusted { 1 << 6 } else { 0 },
+                            features: FEATURE_PEN_PRESSURE
+                                | (1 << 1)
+                                | if input_trusted { 1 << 6 } else { 0 },
                         }
                     }
                     other => other,
@@ -915,7 +957,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                     resources.capture.as_ref(),
                     message,
                     ffi::host_time_us(),
-                    FEATURE_PEN_PRESSURE | if input_trusted { 1 << 6 } else { 0 },
+                    FEATURE_PEN_PRESSURE | (1 << 1) | if input_trusted { 1 << 6 } else { 0 },
                 ) {
                     if control_tx.send(Packet::Control(reply)).is_err() {
                         break;
@@ -934,8 +976,9 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                             });
                         }
                         if client_capabilities_seen {
-                            let features =
-                                FEATURE_PEN_PRESSURE | if input_trusted { 1 << 6 } else { 0 };
+                            let features = FEATURE_PEN_PRESSURE
+                                | (1 << 1)
+                                | if input_trusted { 1 << 6 } else { 0 };
                             let _ = control_tx
                                 .send(Packet::Control(ControlMessage::Capabilities { features }));
                         }

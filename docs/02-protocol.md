@@ -101,6 +101,7 @@ pub enum InputEvent {
         is_down: bool,
         modifiers: u8, // Shift, Ctrl, Alt, Meta
     },
+    MouseButton { button: u8, is_down: bool }, // tag 6; 0=left, 1=right, 2=middle
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -173,6 +174,7 @@ pub enum GestureKind {
 
 ## 7. Capabilities — v1, Phase 2 WP-0
 
+* `MouseButton { button: u8, is_down: bool }` là `InputEvent` tag 6 (0 trái, 1 phải, 2 giữa); Rust/Kotlin golden: `input_mouse_button`.
 * `Capabilities { features: u32 }` là biến thể cuối tag 9. Bit 0..7 lần lượt: `PEN_PRESSURE`, `POINTER_RELATIVE`, `GESTURE`, `KEYBOARD`, `TEXT`, `PEN_CONFIG`, `INPUT_TRUSTED`, `VIDEO_SUSPEND`. Bit lạ được bỏ qua.
 * Sau `Accept`, client gửi capabilities; host chỉ trả lời sau khi nhận message đó. Host không chủ động phát capability trước đó. `INPUT_TRUSTED` biểu thị quyền Accessibility trên macOS.
 * Frame có enum tag chưa biết nhưng độ dài hợp lệ được bỏ qua; lỗi framing/body khác vẫn giữ hành vi lỗi.

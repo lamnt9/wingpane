@@ -27,14 +27,18 @@ import androidx.lifecycle.lifecycleScope
 import io.wingpane.input.TouchMapper
 import io.wingpane.input.StylusMapper
 import io.wingpane.input.PalmRejectionFilter
+import io.wingpane.input.TrackpadGestureDetector
 import io.wingpane.net.ClientState
 import io.wingpane.net.WingpaneClient
 import io.wingpane.proto.ControlMessage
 import io.wingpane.proto.InputEvent
 import io.wingpane.proto.Packet
+import io.wingpane.proto.Mode
 import io.wingpane.ui.hud.StreamHudOverlay
 import io.wingpane.ui.hud.StreamTouchPoint
 import io.wingpane.ui.screen.ConnectionScreen
+import io.wingpane.ui.screen.PenCanvasScreen
+import io.wingpane.ui.screen.TrackpadScreen
 import io.wingpane.ui.state.ClientStateMapper
 import io.wingpane.ui.theme.WingpaneTheme
 import io.wingpane.video.VideoDecoder
@@ -44,6 +48,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var client: WingpaneClient
     private lateinit var decoder: VideoDecoder
     private var clientState by mutableStateOf<ClientState>(ClientState.Waiting)
+    private var mode by mutableStateOf(Mode.ExtendedDisplay)
+    private var activeTrackpadDetector: TrackpadGestureDetector? = null
     private var stats by mutableStateOf(VideoDecoder.Stats(0f, 0, 0, 0, 0, 0, 0, 0, 0))
     private var lastBitrateKbps by mutableStateOf(0u)
     private var videoAspectRatio by mutableStateOf<Float?>(null)
@@ -75,6 +81,7 @@ class MainActivity : ComponentActivity() {
                 wasActive = activeNow
                 clientState = nextState
                 if (nextState is ClientState.Active) {
+                    mode = Mode.ExtendedDisplay
                     lastBitrateKbps = nextState.accept.bitrateKbps
                     nextState.accept.virtualDisplaySpec?.let { spec ->
                         val w = spec.first.toInt()
@@ -107,6 +114,8 @@ class MainActivity : ComponentActivity() {
                 var lockAspectRatio by rememberSaveable { mutableStateOf(true) }
                 var showTouches by rememberSaveable { mutableStateOf(false) }
                 var palmLevel by rememberSaveable { mutableStateOf(palmFilter.currentLevel().name) }
+                val trackpadDetector = androidx.compose.runtime.remember { TrackpadGestureDetector(tapSlopPx = 8f * resources.displayMetrics.density) }
+                activeTrackpadDetector = trackpadDetector
 
                 // Brief: Stream forces sensorLandscape; connection screens support both tablet landscape & phone portrait.
                 LaunchedEffect(uiModel.isStreamScreen) {
@@ -163,6 +172,13 @@ class MainActivity : ComponentActivity() {
                         modifier = surfaceModifier,
                     )
 
+                    if (uiModel.isStreamScreen && mode == Mode.GraphicsTablet) {
+                        PenCanvasScreen(onStylus = { event, view ->
+                            if (hostSupportsPen()) handleStylus(view, event, hover = event.actionMasked in setOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT)) else false
+                        })
+                    } else if (uiModel.isStreamScreen && mode == Mode.TrackpadKeyboard) {
+                        TrackpadScreen(detector = trackpadDetector, onEvents = { events -> events.forEach(client::sendInput) })
+                    }
                     if (uiModel.isStreamScreen) {
                         StreamHudOverlay(
                             stats = stats,
@@ -190,6 +206,19 @@ class MainActivity : ComponentActivity() {
                                 cancelTouch()
                                 client.disconnect()
                                 client.connect()
+                            },
+                            mode = mode,
+                            hostFeatures = hostFeatures,
+                            capabilitiesReceived = hostCapabilitiesReceived,
+                            onModeChange = { next ->
+                                if (next != mode) {
+                                    cancelTouch()
+                                    mode = next
+                                    lifecycleScope.launch {
+                                        client.sendControl(ControlMessage.SetMode(next))
+                                        if (next == Mode.ExtendedDisplay) client.sendControl(ControlMessage.RequestKeyframe)
+                                    }
+                                }
                             },
                         )
                     } else {
@@ -227,6 +256,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleTouch(view: View, event: MotionEvent): Boolean {
+        if (mode != Mode.ExtendedDisplay) return true
         val rawX = event.x + view.left
         val rawY = event.y + view.top
         when (event.actionMasked) {
@@ -323,8 +353,8 @@ class MainActivity : ComponentActivity() {
         val inRange = action != StylusMapper.Action.Exit && action != StylusMapper.Action.Cancel
         val timeNs = event.eventTime * 1_000_000L
         palmFilter.noteStylus(inRange, timeNs)
-        val videoWidth = touchMapperWidth ?: return false
-        val videoHeight = touchMapperHeight
+        val videoWidth = if (mode == Mode.GraphicsTablet) 1600 else touchMapperWidth ?: return false
+        val videoHeight = if (mode == Mode.GraphicsTablet) 1000 else touchMapperHeight
         if (action == StylusMapper.Action.Move) {
             for (historyIndex in 0 until event.historySize) {
                 val historical = StylusMapper.Sample(
@@ -361,6 +391,7 @@ class MainActivity : ComponentActivity() {
         activeStreamTouch = null
         touchMapper?.cancel()?.forEach(client::sendInput)
         cancelStylus()
+        activeTrackpadDetector?.onTouch(TrackpadGestureDetector.Action.Cancel, emptyList(), SystemClock.uptimeMillis())?.forEach(client::sendInput)
     }
 
     override fun onPause() { cancelTouch(); super.onPause() }

@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import io.wingpane.R
 import io.wingpane.input.PalmRejectionFilter
 import io.wingpane.ui.screen.WingpaneSecondaryButton
+import io.wingpane.proto.Mode
 import io.wingpane.ui.state.ClientStateMapper
 import io.wingpane.ui.state.DisconnectConfirmStateMachine
 import io.wingpane.ui.state.HudStatusDot
@@ -137,6 +138,10 @@ fun StreamHudOverlay(
     externalOpenRequestTick: Int,
     onDisconnect: () -> Unit,
     onCancelReconnect: () -> Unit,
+    mode: Mode = Mode.ExtendedDisplay,
+    hostFeatures: Int = 0,
+    capabilitiesReceived: Boolean = false,
+    onModeChange: (Mode) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -317,6 +322,8 @@ fun StreamHudOverlay(
             ) {
                 ExpandedHudPanel(
                     accessibilityMissing = accessibilityMissing,
+                    mode = mode, hostFeatures = hostFeatures, capabilitiesReceived = capabilitiesReceived,
+                    onModeChange = onModeChange,
                     fps = displayedFps,
                     latencyMs = displayedLatencyMs,
                     bitrateMbps = bitrateKbps.toFloat() / 1000f,
@@ -506,6 +513,10 @@ private fun CollapsedHudHalfPill(
 @Composable
 private fun ExpandedHudPanel(
     accessibilityMissing: Boolean,
+    mode: Mode,
+    hostFeatures: Int,
+    capabilitiesReceived: Boolean,
+    onModeChange: (Mode) -> Unit,
     fps: Int,
     latencyMs: Long,
     bitrateMbps: Float,
@@ -699,103 +710,16 @@ private fun ExpandedHudPanel(
                 }
             }
 
-            // 2. Mode: segmented Display / Pen / Trackpad (Pen/Trackpad disabled "Coming soon");
-            // at fontScale > 1.3 becomes vertical list.
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(spacing.sm),
-            ) {
-                Text(
-                    text = stringResource(R.string.hud_stream_mode),
-                    style = WingpaneTheme.typography.captionStrong,
-                    color = colors.textMuted,
-                )
-
-                if (!isLargeFontScale) {
-                    Surface(
-                        shape = RoundedCornerShape(radius.card),
-                        color = colors.surface2,
-                        border = BorderStroke(1.dp, colors.border),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(spacing.xs),
-                            horizontalArrangement = Arrangement.spacedBy(spacing.xs),
-                        ) {
-                            // Active Display mode segment
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = touch.minTarget)
-                                    .clip(RoundedCornerShape(spacing.sm))
-                                    .background(colors.primary)
-                                    .padding(horizontal = spacing.xs, vertical = spacing.xs),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.hud_mode_display),
-                                    style = WingpaneTheme.typography.captionStrong,
-                                    color = colors.onPrimary,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-
-                            // Disabled Pen mode segment
-                            HudDisabledModeSegment(
-                                title = stringResource(R.string.hud_mode_pen),
-                                badge = stringResource(R.string.hud_coming_soon),
-                                modifier = Modifier.weight(1f),
-                            )
-
-                            // Disabled Trackpad mode segment
-                            HudDisabledModeSegment(
-                                title = stringResource(R.string.hud_mode_trackpad),
-                                badge = stringResource(R.string.hud_coming_soon),
-                                modifier = Modifier.weight(1f),
-                            )
+            // Mode buttons are capability-gated; controls keep the specified 48dp target.
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                Text(stringResource(R.string.hud_stream_mode), style = WingpaneTheme.typography.captionStrong, color = colors.textMuted)
+                Row(horizontalArrangement = Arrangement.spacedBy(spacing.xs), modifier = Modifier.fillMaxWidth()) {
+                    listOf(Mode.ExtendedDisplay to stringResource(R.string.hud_mode_display), Mode.GraphicsTablet to stringResource(R.string.hud_mode_pen), Mode.TrackpadKeyboard to stringResource(R.string.hud_mode_trackpad)).forEach { (candidate, title) ->
+                        val enabled = candidate == Mode.ExtendedDisplay || capabilitiesReceived && (hostFeatures and if (candidate == Mode.GraphicsTablet) 1 else 2) != 0
+                        val selected = candidate == mode
+                        Box(modifier = Modifier.weight(1f).heightIn(min = touch.minTarget).clip(RoundedCornerShape(spacing.sm)).background(if (selected) colors.primary else colors.surface2).border(1.dp, colors.border, RoundedCornerShape(spacing.sm)).clickable(enabled = enabled, role = Role.Button) { onPanelInteraction(); onModeChange(candidate) }.padding(horizontal = spacing.xs, vertical = spacing.xs), contentAlignment = Alignment.Center) {
+                            Text(title, style = WingpaneTheme.typography.captionStrong, color = if (selected) colors.onPrimary else if (enabled) colors.text else colors.textMuted, textAlign = TextAlign.Center)
                         }
-                    }
-                } else {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(spacing.sm),
-                    ) {
-                        // Active Display card
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = touch.minTarget)
-                                .clip(RoundedCornerShape(radius.card))
-                                .background(colors.primary)
-                                .padding(horizontal = spacing.md, vertical = spacing.sm),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.hud_mode_display),
-                                style = WingpaneTheme.typography.bodyStrong,
-                                color = colors.onPrimary,
-                            )
-                            Text(
-                                text = stringResource(R.string.hud_active_badge),
-                                style = WingpaneTheme.typography.captionStrong,
-                                color = colors.onPrimary,
-                            )
-                        }
-
-                        HudDisabledModeRow(
-                            title = stringResource(R.string.hud_mode_pen),
-                            subtitle = stringResource(R.string.hud_mode_pen_desc),
-                            badge = stringResource(R.string.hud_coming_soon),
-                        )
-
-                        HudDisabledModeRow(
-                            title = stringResource(R.string.hud_mode_trackpad),
-                            subtitle = stringResource(R.string.hud_mode_trackpad_desc),
-                            badge = stringResource(R.string.hud_coming_soon),
-                        )
                     }
                 }
             }
