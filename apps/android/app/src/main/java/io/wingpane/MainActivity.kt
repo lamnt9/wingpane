@@ -1,6 +1,7 @@
 package io.wingpane
 
 import android.content.pm.ActivityInfo
+import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -46,9 +47,15 @@ import io.wingpane.ui.state.ClientStateMapper
 import io.wingpane.ui.theme.WingpaneTheme
 import io.wingpane.video.VideoDecoder
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private lateinit var client: WingpaneClient
+    private var ucServiceCheck: Job? = null
+    private val clockSyncCallback: (io.wingpane.net.ClockOffsetEstimator.Estimate) -> Unit = { sync ->
+        decoder.updateClockSync(sync.offsetUs, sync.rttUs)
+    }
     private lateinit var decoder: VideoDecoder
     private var clientState by mutableStateOf<ClientState>(ClientState.Waiting)
     private var mode by mutableStateOf(Mode.ExtendedDisplay)
@@ -80,9 +87,9 @@ class MainActivity : ComponentActivity() {
         palmFilter.setLevel(runCatching { PalmRejectionFilter.Level.valueOf(storedPalm ?: "Standard") }.getOrDefault(PalmRejectionFilter.Level.Standard))
         applyImmersiveSticky()
         decoder = VideoDecoder({ lifecycleScope.launch { client.sendControl(ControlMessage.RequestKeyframe) } }) { stats = it }
-        client = WingpaneClient()
-        client.onClockSync = { sync -> decoder.updateClockSync(sync.offsetUs, sync.rttUs) }
-        client.connect()
+        client = (application as WingpaneApplication).clientHolder.client
+        client.onClockSync = clockSyncCallback
+        if (client.state.value is ClientState.Waiting) client.connect()
         lifecycleScope.launch {
             var wasActive = false
             client.state.collect { nextState ->
@@ -453,9 +460,53 @@ class MainActivity : ComponentActivity() {
         activeTrackpadDetector?.onTouch(TrackpadGestureDetector.Action.Cancel, emptyList(), SystemClock.uptimeMillis())?.forEach(client::sendInput)
     }
 
-    override fun onPause() { cancelTouch(); super.onPause() }
-    override fun onStop() { cancelTouch(); super.onStop() }
-    override fun onDestroy() { cancelTouch(); client.cancel(); decoder.close(); super.onDestroy() }
+    override fun onResume() {
+        super.onResume()
+        handleUcNotificationAction(intent)
+        val app = application as WingpaneApplication
+        if ((app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
+            intent?.hasExtra("uc_force_fgs") == true) {
+            app.ucForceFgs = intent.getBooleanExtra("uc_force_fgs", false)
+        }
+        ucServiceCheck = lifecycleScope.launch {
+            while (true) {
+                app.startUcServiceIfEligible()
+                delay(500)
+            }
+        }
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleUcNotificationAction(intent)
+    }
+    private fun handleUcNotificationAction(intent: Intent?) {
+        if (intent?.action != io.wingpane.uc.UcForegroundService.ACTION_DISPLAY) return
+        intent.action = null
+        mode = Mode.ExtendedDisplay
+        lifecycleScope.launch {
+            client.sendControl(ControlMessage.SetMode(Mode.ExtendedDisplay))
+            client.sendControl(ControlMessage.RequestKeyframe)
+        }
+    }
+    override fun onStart() {
+        super.onStart()
+        client.videoSinkAttached = true
+        if (client.isActive()) lifecycleScope.launch { client.sendControl(ControlMessage.RequestKeyframe) }
+    }
+    override fun onPause() { ucServiceCheck?.cancel(); ucServiceCheck = null; cancelTouch(); super.onPause() }
+    override fun onStop() { client.videoSinkAttached = false; cancelTouch(); super.onStop() }
+    override fun onDestroy() {
+        cancelTouch()
+        if (client.onClockSync === clockSyncCallback) client.onClockSync = null
+        val app = application as WingpaneApplication
+        if (!isChangingConfigurations && !app.foregroundServiceRunning) {
+            client.cancel()
+            app.clientHolder.clear()
+        }
+        decoder.close()
+        super.onDestroy()
+    }
 }
 
 private const val TOOL_TYPE_PALM = 5
