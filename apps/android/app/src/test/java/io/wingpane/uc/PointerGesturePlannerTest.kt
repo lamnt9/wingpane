@@ -8,4 +8,24 @@ class PointerGesturePlannerTest {
     @Test fun movementPastSlopStartsDragAndCancelEndsIt() { val p=PointerGesturePlanner(); p.onEvent(CursorEvent.Button(0,true,0f,0f,0)); assertTrue(p.onEvent(CursorEvent.Move(7f,0f,20)).first() is GesturePlan.StrokeStart); assertTrue(p.cancelAll().single() is GesturePlan.StrokeEnd) }
     @Test fun rightButtonLongPressAndMiddleIgnored() { val p=PointerGesturePlanner(); p.onEvent(CursorEvent.Button(1,true,1f,2f,0)); assertTrue(p.onEvent(CursorEvent.Button(1,false,1f,2f,10)).single() is GesturePlan.LongPress); p.onEvent(CursorEvent.Button(2,true,1f,2f,20)); assertTrue(p.onEvent(CursorEvent.Button(2,false,1f,2f,30)).isEmpty()) }
     @Test fun momentumScrollIgnored() { val p=PointerGesturePlanner(); assertTrue(p.onEvent(CursorEvent.Scroll(0f,10f,CursorEvent.Phase.Momentum,0)).isEmpty()) }
+
+    @Test fun doubleClickProducesTwoTapsWithinTimeout() {
+        val doubleTapTimeoutMs = 300L
+        val planner = PointerGesturePlanner()
+        planner.onEvent(CursorEvent.Button(0, true, 10f, 20f, 0))
+        val first = planner.onEvent(CursorEvent.Button(0, false, 10f, 20f, 40))
+        planner.onEvent(CursorEvent.Button(0, true, 10f, 20f, 120))
+        val second = planner.onEvent(CursorEvent.Button(0, false, 10f, 20f, 160))
+        assertEquals(listOf(GesturePlan.Tap(10f, 20f), GesturePlan.Tap(10f, 20f)), first + second)
+        assertTrue(120L - 40L < doubleTapTimeoutMs)
+    }
+
+    @Test fun rightButtonUsesInjectedLongPressTimeoutPlusMargin() {
+        val longPressTimeoutMs = 500L
+        val planner = PointerGesturePlanner(longPressMs = longPressTimeoutMs + 100L)
+        planner.onEvent(CursorEvent.Button(1, true, 1f, 2f, 0))
+        val plan = planner.onEvent(CursorEvent.Button(1, false, 1f, 2f, 20)).single() as GesturePlan.LongPress
+        assertTrue(plan.durMs >= longPressTimeoutMs)
+        assertEquals(600L, plan.durMs)
+    }
 }
