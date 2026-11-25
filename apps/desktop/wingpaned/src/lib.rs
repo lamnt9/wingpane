@@ -144,11 +144,20 @@ pub struct PenSample {
 
 pub struct InputRouter<'a> {
     mode: wingpane_proto::Mode,
+    pressure_curve: [f32; 4],
+    pen_target: wingpane_proto::PenTarget,
+    pen_configured: bool,
     sink: &'a mut dyn InputSink,
 }
 impl<'a> InputRouter<'a> {
     pub fn new(mode: wingpane_proto::Mode, sink: &'a mut dyn InputSink) -> Self {
-        Self { mode, sink }
+        Self {
+            mode,
+            pressure_curve: [0.25, 0.25, 0.75, 0.75],
+            pen_target: wingpane_proto::PenTarget::VirtualDisplay,
+            pen_configured: false,
+            sink,
+        }
     }
     pub fn mode(&self) -> wingpane_proto::Mode {
         self.mode
@@ -157,6 +166,19 @@ impl<'a> InputRouter<'a> {
         self.sink.release_all();
         self.mode = mode;
         self.sink.set_mode(mode);
+    }
+    /// Stores a peer supplied curve only when its x handles are in range.
+    pub fn set_pen_config(&mut self, curve: [f32; 4], target: wingpane_proto::PenTarget) -> bool {
+        if curve.iter().any(|value| !value.is_finite())
+            || !(0.0..=1.0).contains(&curve[0])
+            || !(0.0..=1.0).contains(&curve[2])
+        {
+            return false;
+        }
+        self.pressure_curve = curve;
+        self.pen_target = target;
+        self.pen_configured = true;
+        true
     }
     pub fn handle_input(&self, packet: wingpane_proto::InputPacket) -> bool {
         use wingpane_proto::{InputEvent, Mode};
@@ -180,7 +202,7 @@ impl<'a> InputRouter<'a> {
                     y,
                     pressure: wingpane_core::pen::apply_pressure_curve(
                         pressure,
-                        &[0.25, 0.25, 0.75, 0.75],
+                        &self.pressure_curve,
                     ),
                     tilt_x,
                     tilt_y,
@@ -188,7 +210,10 @@ impl<'a> InputRouter<'a> {
                     is_hover,
                     button_mask,
                 };
-                if self.mode == Mode::GraphicsTablet {
+                if (self.pen_configured
+                    && self.pen_target == wingpane_proto::PenTarget::MainDisplay)
+                    || (!self.pen_configured && self.mode == Mode::GraphicsTablet)
+                {
                     self.sink.pen_main(sample)
                 } else {
                     self.sink.pen(sample)
@@ -629,6 +654,59 @@ mod tests {
         assert_eq!(
             *sink.0.lock().unwrap(),
             ["main_pen", "move", "scroll", "button"]
+        );
+    }
+
+    #[test]
+    fn pen_config_validates_handles_and_applies_curve_and_target() {
+        struct Recording(Mutex<Vec<(&'static str, PenSample)>>);
+        impl InputSink for Recording {
+            fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {}
+            fn release_all(&self) {}
+            fn pen(&self, sample: PenSample) {
+                self.0.lock().unwrap().push(("virtual", sample));
+            }
+            fn pen_main(&self, sample: PenSample) {
+                self.0.lock().unwrap().push(("main", sample));
+            }
+        }
+        let mut sink = Recording(Mutex::new(Vec::new()));
+        let mut router = InputRouter::new(wingpane_proto::Mode::ExtendedDisplay, &mut sink);
+        assert!(!router.set_pen_config(
+            [f32::NAN, 0.2, 0.5, 0.8],
+            wingpane_proto::PenTarget::MainDisplay
+        ));
+        assert!(!router.set_pen_config(
+            [0.2, f32::NAN, 0.5, 0.8],
+            wingpane_proto::PenTarget::MainDisplay
+        ));
+        assert!(
+            !router.set_pen_config([1.1, 0.2, 0.5, 0.8], wingpane_proto::PenTarget::MainDisplay)
+        );
+        assert!(router.set_pen_config(
+            [0.45, 0.20, 0.88, 0.60],
+            wingpane_proto::PenTarget::MainDisplay
+        ));
+        assert!(router.handle_input(wingpane_proto::InputPacket {
+            seq: 1,
+            ts_us: 1,
+            event: wingpane_proto::InputEvent::Pen {
+                x: 0.4,
+                y: 0.5,
+                pressure: 0.5,
+                tilt_x: 0,
+                tilt_y: 0,
+                is_down: true,
+                is_hover: false,
+                button_mask: 0,
+                timestamp_us: 1
+            },
+        }));
+        let got = sink.0.lock().unwrap();
+        assert_eq!(got[0].0, "main");
+        assert_eq!(
+            got[0].1.pressure,
+            wingpane_core::pen::apply_pressure_curve(0.5, &[0.45, 0.20, 0.88, 0.60])
         );
     }
 

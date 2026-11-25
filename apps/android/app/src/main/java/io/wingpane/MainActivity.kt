@@ -34,6 +34,7 @@ import io.wingpane.proto.ControlMessage
 import io.wingpane.proto.InputEvent
 import io.wingpane.proto.Packet
 import io.wingpane.proto.Mode
+import io.wingpane.proto.PenTarget
 import io.wingpane.ui.hud.StreamHudOverlay
 import io.wingpane.ui.hud.StreamTouchPoint
 import io.wingpane.ui.screen.ConnectionScreen
@@ -58,6 +59,9 @@ class MainActivity : ComponentActivity() {
     private var touchMapperHeight: Int = 0
     private val palmFilter = PalmRejectionFilter()
     private var lastStylusSample: InputEvent.Pen? = null
+    private var pressureCurve by mutableStateOf(listOf(.25f, .25f, .75f, .75f))
+    private var penTarget by mutableStateOf(PenTarget.VirtualDisplay)
+    private var penTargetCustomized = false
     private fun hostSupportsPen() = client.hostCapabilitiesReceived.value && (client.hostFeatures.value and 1) != 0
 
     private var activeStreamTouch by mutableStateOf<StreamTouchPoint?>(null)
@@ -67,6 +71,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val storedPalm = getSharedPreferences("input", MODE_PRIVATE).getString("palm_rejection", "Standard")
+        val inputPrefs = getSharedPreferences("input", MODE_PRIVATE)
+        penTargetCustomized = inputPrefs.getBoolean("pen_target_customized", false)
+        pressureCurve = (0..3).map { inputPrefs.getFloat("pressure_curve_$it", listOf(.25f, .25f, .75f, .75f)[it]) }
+        penTarget = runCatching { PenTarget.valueOf(inputPrefs.getString("pen_target", PenTarget.VirtualDisplay.name)!!) }.getOrDefault(PenTarget.VirtualDisplay)
         palmFilter.setLevel(runCatching { PalmRejectionFilter.Level.valueOf(storedPalm ?: "Standard") }.getOrDefault(PalmRejectionFilter.Level.Standard))
         applyImmersiveSticky()
         decoder = VideoDecoder({ lifecycleScope.launch { client.sendControl(ControlMessage.RequestKeyframe) } }) { stats = it }
@@ -82,6 +90,7 @@ class MainActivity : ComponentActivity() {
                 clientState = nextState
                 if (nextState is ClientState.Active) {
                     mode = Mode.ExtendedDisplay
+                    if (!penTargetCustomized) penTarget = PenTarget.VirtualDisplay
                     lastBitrateKbps = nextState.accept.bitrateKbps
                     nextState.accept.virtualDisplaySpec?.let { spec ->
                         val w = spec.first.toInt()
@@ -110,6 +119,13 @@ class MainActivity : ComponentActivity() {
                 val uiModel = ClientStateMapper.map(clientState)
                 val hostFeatures by client.hostFeatures.collectAsState()
                 val hostCapabilitiesReceived by client.hostCapabilitiesReceived.collectAsState()
+                LaunchedEffect(clientState, hostCapabilitiesReceived, hostFeatures, pressureCurve, penTarget) {
+                    if (clientState is ClientState.Active && hostCapabilitiesReceived && (hostFeatures and (1 shl 5)) != 0) {
+                        lifecycleScope.launch {
+                            client.sendControl(ControlMessage.PenConfig(pressureCurve, penTarget))
+                        }
+                    }
+                }
                 var keepHudVisible by rememberSaveable { mutableStateOf(false) }
                 var lockAspectRatio by rememberSaveable { mutableStateOf(true) }
                 var showTouches by rememberSaveable { mutableStateOf(false) }
@@ -226,11 +242,26 @@ class MainActivity : ComponentActivity() {
                                 if (next != mode) {
                                     cancelTouch()
                                     mode = next
+                                    if (!penTargetCustomized) {
+                                        penTarget = if (next == Mode.GraphicsTablet) PenTarget.MainDisplay else PenTarget.VirtualDisplay
+                                    }
                                     lifecycleScope.launch {
                                         client.sendControl(ControlMessage.SetMode(next))
                                         if (next == Mode.ExtendedDisplay) client.sendControl(ControlMessage.RequestKeyframe)
                                     }
                                 }
+                            },
+                            pressureCurve = pressureCurve,
+                            penTarget = penTarget,
+                            onPenConfigChange = { curve, target ->
+                                if (curve.size == 4) pressureCurve = curve
+                                if (target != penTarget) penTargetCustomized = true
+                                penTarget = target
+                                getSharedPreferences("input", MODE_PRIVATE).edit().apply {
+                                    pressureCurve.forEachIndexed { index, value -> putFloat("pressure_curve_$index", value) }
+                                    putString("pen_target", penTarget.name)
+                                    putBoolean("pen_target_customized", penTargetCustomized)
+                                }.apply()
                             },
                         )
                     } else {

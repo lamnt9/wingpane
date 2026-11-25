@@ -6,7 +6,7 @@ mod control;
 mod frame;
 mod input;
 
-pub use control::{ControlMessage, Mode, RejectReason, VideoCodec, PROTO_VERSION};
+pub use control::{ControlMessage, Mode, PenTarget, RejectReason, VideoCodec, PROTO_VERSION};
 pub use frame::{encode_frame, FrameDecoder, FrameError, Packet, VideoPacket, MAX_FRAME_LEN};
 pub use input::{GestureKind, InputEvent, InputPacket, TouchPhase};
 
@@ -49,6 +49,10 @@ mod tests {
             ControlMessage::Reject(RejectReason::Busy),
             ControlMessage::Reject(RejectReason::ScreenRecordingDenied),
             ControlMessage::Capabilities { features: 0x45 },
+            ControlMessage::PenConfig {
+                pressure_curve: [0.25, 0.25, 0.75, 0.75],
+                target: PenTarget::MainDisplay,
+            },
         ];
         for c in controls {
             roundtrip(Packet::Control(c));
@@ -224,6 +228,13 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
     controls.push((
         "control_capabilities",
         ControlMessage::Capabilities { features: 0x4f },
+    ));
+    controls.push((
+        "control_pen_config",
+        ControlMessage::PenConfig {
+            pressure_curve: [0.25, 0.25, 0.75, 0.75],
+            target: PenTarget::MainDisplay,
+        },
     ));
     let mut packets: Vec<(&'static str, Packet)> = controls
         .into_iter()

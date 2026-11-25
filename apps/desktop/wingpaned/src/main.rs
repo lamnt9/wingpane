@@ -163,8 +163,12 @@ const FEATURE_PEN_PRESSURE: u32 = 1 << 0;
 const FEATURE_POINTER_RELATIVE: u32 = 1 << 1;
 const FEATURE_GESTURE: u32 = 1 << 2;
 const FEATURE_KEYBOARD: u32 = 1 << 3;
-const HOST_INPUT_FEATURES: u32 =
-    FEATURE_PEN_PRESSURE | FEATURE_POINTER_RELATIVE | FEATURE_GESTURE | FEATURE_KEYBOARD;
+const FEATURE_PEN_CONFIG: u32 = 1 << 5;
+const HOST_INPUT_FEATURES: u32 = FEATURE_PEN_PRESSURE
+    | FEATURE_POINTER_RELATIVE
+    | FEATURE_GESTURE
+    | FEATURE_KEYBOARD
+    | FEATURE_PEN_CONFIG;
 impl InputSink for NativeInputSink {
     fn pointer(&self, x: f32, y: f32, phase: TouchPhase) {
         unsafe { wp_input_pointer(self.0, f64::from(x), f64::from(y), phase as u8) };
@@ -952,6 +956,13 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
                         if status_json {
                             emit_status(StatusEvent::Mode { mode: next_mode });
                         }
+                        continue;
+                    }
+                    ControlMessage::PenConfig {
+                        pressure_curve,
+                        target,
+                    } => {
+                        input_router.set_pen_config(pressure_curve, target);
                         continue;
                     }
                     ControlMessage::Capabilities { .. } => {

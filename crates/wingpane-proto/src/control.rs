@@ -12,6 +12,13 @@ pub enum Mode {
     TrackpadKeyboard,
 }
 
+/// Destination used by the host when routing pen samples.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PenTarget {
+    MainDisplay,
+    VirtualDisplay,
+}
+
 /// Control channel messages between Host and Client.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ControlMessage {
@@ -41,6 +48,11 @@ pub enum ControlMessage {
     /// Feature bits supported by this peer. Appended to preserve existing wire tags.
     Capabilities {
         features: u32,
+    },
+    /// Stylus response curve and destination. Appended to preserve existing tags.
+    PenConfig {
+        pressure_curve: [f32; 4],
+        target: PenTarget,
     },
 }
 

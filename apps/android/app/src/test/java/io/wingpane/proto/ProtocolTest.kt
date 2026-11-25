@@ -3,6 +3,7 @@ package io.wingpane.proto
 import org.junit.Assert.*
 import org.junit.Test
 import kotlin.random.Random
+import io.wingpane.ui.hud.PressureCurvePresets
 
 class ProtocolTest {
     private fun expected(): Map<String, Packet> {
@@ -17,6 +18,7 @@ class ProtocolTest {
             "control_disconnect" to ControlMessage.Disconnect,
             "control_host_time" to ControlMessage.HostTime(0x1020304050607080uL, 0x2010203040506070uL),
             "control_capabilities" to ControlMessage.Capabilities(0x4fu),
+            "control_pen_config" to ControlMessage.PenConfig(listOf(.25f,.25f,.75f,.75f), PenTarget.MainDisplay),
             "reject_version_mismatch" to ControlMessage.Reject(RejectReason.VersionMismatch,1u),
             "reject_unsupported_codec" to ControlMessage.Reject(RejectReason.UnsupportedCodec),
             "reject_invalid_hello" to ControlMessage.Reject(RejectReason.InvalidHello),
@@ -69,6 +71,17 @@ class ProtocolTest {
         listOf(byteArrayOf(0,0,0,0),byteArrayOf(1,0,0x80.toByte(),0)).forEach { b ->
             try { FrameDecoder().also{it.push(b)}.next();fail("expected FrameException") } catch(_:FrameException){}
         }
+    }
+    @Test fun pressurePresetsAreOrderedAndHandlesStayInRange() {
+        val soft = PressureCurvePresets.named("Soft")
+        val linear = PressureCurvePresets.named("Linear")
+        val hard = PressureCurvePresets.named("Hard")
+        assertEquals(4, soft.size)
+        assertEquals(4, linear.size)
+        assertEquals(4, hard.size)
+        assertTrue(soft[1] > soft[0])
+        assertTrue(hard[1] < hard[0])
+        assertEquals(1f, PressureCurvePresets.normalized(linear, 0, 2f)[0])
     }
     @Test fun deterministicRandomInputsOnlyProducePacketsOrFrameException() {
         val random=Random(0x12345678)

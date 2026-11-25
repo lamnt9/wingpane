@@ -38,7 +38,12 @@ pub enum ControlMessage {
     Disconnect,
     // Appended tag 9: feature bitset; unknown bits are ignored.
     Capabilities { features: u32 },
+    // Appended tag 10: stylus response curve and output display.
+    PenConfig { pressure_curve: [f32; 4], target: PenTarget },
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PenTarget { MainDisplay, VirtualDisplay }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 pub enum VideoCodec {
@@ -175,7 +180,8 @@ pub enum GestureKind {
 ## 7. Capabilities — v1, Phase 2 WP-0
 
 * `MouseButton { button: u8, is_down: bool }` là `InputEvent` tag 6 (0 trái, 1 phải, 2 giữa); Rust/Kotlin golden: `input_mouse_button`.
-* `Capabilities { features: u32 }` là biến thể cuối tag 9. Bit 0..7 lần lượt: `PEN_PRESSURE`, `POINTER_RELATIVE`, `GESTURE`, `KEYBOARD`, `TEXT`, `PEN_CONFIG`, `INPUT_TRUSTED`, `VIDEO_SUSPEND`. Bit lạ được bỏ qua.
+* `Capabilities { features: u32 }` là biến thể tag 9. Bit 0..7 lần lượt: `PEN_PRESSURE`, `POINTER_RELATIVE`, `GESTURE`, `KEYBOARD`, `TEXT`, `PEN_CONFIG`, `INPUT_TRUSTED`, `VIDEO_SUSPEND`. Bit lạ được bỏ qua.
 * Sau `Accept`, client gửi capabilities; host chỉ trả lời sau khi nhận message đó. Host không chủ động phát capability trước đó. `INPUT_TRUSTED` biểu thị quyền Accessibility trên macOS.
 * Frame có enum tag chưa biết nhưng độ dài hợp lệ được bỏ qua; lỗi framing/body khác vẫn giữ hành vi lỗi.
-* WP-0 chỉ bật `INPUT_TRUSTED` ở phía host; bit input khác chỉ được quảng bá khi chức năng tương ứng đã được triển khai.
+* `PenConfig { pressure_curve: [f32; 4], target: PenTarget }` là control tag 10. Curve là hai handle `[x1, y1, x2, y2]` của cubic Bézier từ (0,0) tới (1,1); host từ chối giá trị không hữu hạn hoặc `x1`/`x2` ngoài [0,1]. `MainDisplay` chọn màn hình chính, `VirtualDisplay` chọn màn hình ảo.
+* Host quảng bá hỗ trợ `PEN_CONFIG`; Android chỉ gửi cấu hình sau khi nhận capability này. Curve được áp tại host để cùng một config cho kết quả nhất quán.

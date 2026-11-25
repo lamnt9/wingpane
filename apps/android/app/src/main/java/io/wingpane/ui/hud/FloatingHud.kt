@@ -90,6 +90,7 @@ import io.wingpane.R
 import io.wingpane.input.PalmRejectionFilter
 import io.wingpane.ui.screen.WingpaneSecondaryButton
 import io.wingpane.proto.Mode
+import io.wingpane.proto.PenTarget
 import io.wingpane.ui.state.ClientStateMapper
 import io.wingpane.ui.state.DisconnectConfirmStateMachine
 import io.wingpane.ui.state.HudStatusDot
@@ -142,6 +143,9 @@ fun StreamHudOverlay(
     hostFeatures: Int = 0,
     capabilitiesReceived: Boolean = false,
     onModeChange: (Mode) -> Unit = {},
+    pressureCurve: List<Float> = listOf(.25f, .25f, .75f, .75f),
+    penTarget: PenTarget = PenTarget.MainDisplay,
+    onPenConfigChange: (List<Float>, PenTarget) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -324,6 +328,9 @@ fun StreamHudOverlay(
                     accessibilityMissing = accessibilityMissing,
                     mode = mode, hostFeatures = hostFeatures, capabilitiesReceived = capabilitiesReceived,
                     onModeChange = onModeChange,
+                    pressureCurve = pressureCurve,
+                    penTarget = penTarget,
+                    onPenConfigChange = onPenConfigChange,
                     fps = displayedFps,
                     latencyMs = displayedLatencyMs,
                     bitrateMbps = bitrateKbps.toFloat() / 1000f,
@@ -517,6 +524,9 @@ private fun ExpandedHudPanel(
     hostFeatures: Int,
     capabilitiesReceived: Boolean,
     onModeChange: (Mode) -> Unit,
+    pressureCurve: List<Float>,
+    penTarget: PenTarget,
+    onPenConfigChange: (List<Float>, PenTarget) -> Unit,
     fps: Int,
     latencyMs: Long,
     bitrateMbps: Float,
@@ -722,6 +732,14 @@ private fun ExpandedHudPanel(
                         }
                     }
                 }
+            }
+
+            if (mode == Mode.GraphicsTablet && capabilitiesReceived && (hostFeatures and (1 shl 5)) != 0) {
+                PressureCurveEditor(
+                    curve = pressureCurve,
+                    target = penTarget,
+                    onChange = { curve, target -> onPanelInteraction(); onPenConfigChange(curve, target) },
+                )
             }
 
             // 3. Toggle: Lock aspect ratio
