@@ -9,12 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = PermissionsChecker.hasScreenRecordingPermission()
         _ = PermissionsChecker.hasAccessibilityPermission(prompt: false)
+        _ = PermissionsChecker.hasInputMonitoringPermission()
         // Start immediately: the daemon just waits until a phone is connected (decided 2026-11-25).
         _ = controller?.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         controller?.stop()
+        CursorSafety.restore()
     }
 }
 
@@ -25,6 +27,7 @@ struct WingpaneApp: App {
     @StateObject private var controller: DaemonController
     @State private var screenRecordingGranted: Bool = PermissionsChecker.hasScreenRecordingPermission()
     @State private var accessibilityGranted: Bool = PermissionsChecker.hasAccessibilityPermission(prompt: false)
+    @State private var inputMonitoringGranted: Bool = PermissionsChecker.hasInputMonitoringPermission()
     @State private var launchAtLoginEnabled: Bool = (SMAppService.mainApp.status == .enabled)
 
     init() {
@@ -76,6 +79,38 @@ struct WingpaneApp: App {
 
         Divider()
 
+        Menu("Control Android") {
+            Button(statusModel.isUcEnabled ? "Enabled ✓" : "Enabled") {
+                controller.send(command: .ucEnable(!statusModel.isUcEnabled))
+            }
+            .disabled(statusModel.ucState == .unavailable)
+
+            Menu("Edge") {
+                ForEach(UcEdge.allCases, id: \.self) { edge in
+                    let isCurrent = (controller.options.ucEdge == edge)
+                    Button(isCurrent ? "\(edge.displayTitle) ✓" : edge.displayTitle) {
+                        var updated = controller.options
+                        updated.ucEdge = edge
+                        controller.setOptions(updated)
+                    }
+                }
+            }
+
+            if statusModel.ucState == .inside {
+                Button("Return to Mac now") {
+                    controller.send(command: .ucReturn)
+                }
+            }
+
+            Divider()
+
+            Text("Ctrl+⌥+Esc: luôn trả chuột về Mac")
+                .disabled(true)
+
+            Text(statusModel.ucStatusText)
+                .disabled(true)
+        }
+
         Menu("Options") {
             Button(controller.options.hidpi ? "HiDPI ✓" : "HiDPI") {
                 var updated = controller.options
@@ -105,12 +140,17 @@ struct WingpaneApp: App {
             // Daemon-reported state wins: macOS grants are per process and the daemon does the injecting.
             let screenOK = statusModel.daemonScreenRecording ?? screenRecordingGranted
             let accessOK = statusModel.daemonInputTrusted ?? accessibilityGranted
+            let inputMonitorOK = statusModel.daemonInputMonitoring ?? inputMonitoringGranted
             Button("Screen Recording \(screenOK ? "✓" : "✗")") {
                 openSettingsOnce(PermissionsChecker.screenRecordingSettingsURL)
             }
 
             Button("Accessibility \(accessOK ? "✓" : "✗")") {
                 openSettingsOnce(PermissionsChecker.accessibilitySettingsURL)
+            }
+
+            Button("Input Monitoring \(inputMonitorOK ? "✓" : "✗")") {
+                openSettingsOnce(PermissionsChecker.inputMonitoringSettingsURL)
             }
         }
 
@@ -134,6 +174,7 @@ struct WingpaneApp: App {
 
         Button("Quit Wingpane") {
             controller.stop()
+            CursorSafety.restore()
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: .command)
@@ -177,6 +218,7 @@ struct WingpaneApp: App {
     private func refreshPermissions() {
         screenRecordingGranted = PermissionsChecker.hasScreenRecordingPermission()
         accessibilityGranted = PermissionsChecker.hasAccessibilityPermission(prompt: false)
+        inputMonitoringGranted = PermissionsChecker.hasInputMonitoringPermission()
     }
 
     private func toggleLaunchAtLogin() {

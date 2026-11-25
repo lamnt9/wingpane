@@ -86,6 +86,30 @@ final class WingpaneAppCoreTests: XCTestCase {
         )
         XCTAssertEqual(errorEvent, .error(message: "Screen Recording permission lost"))
 
+        let permissions = try DaemonEvent.decode(
+            jsonLine: #"{"event":"permissions","input_trusted":true,"screen_recording":false,"input_monitoring":true}"#
+        )
+        XCTAssertEqual(
+            permissions,
+            .permissions(inputTrusted: true, screenRecording: false, inputMonitoring: true)
+        )
+
+        let ucArmed = try DaemonEvent.decode(
+            jsonLine: #"{"event":"uc","state":"armed","edge":"right","client_ready":true,"edge_blocked":false}"#
+        )
+        XCTAssertEqual(
+            ucArmed,
+            .uc(state: .armed, edge: .right, clientReady: true, reason: nil, edgeBlocked: false)
+        )
+
+        let ucDisabledReason = try DaemonEvent.decode(
+            jsonLine: #"{"event":"uc","state":"disabled","edge":"left","client_ready":false,"reason":"secure_input","edge_blocked":true}"#
+        )
+        XCTAssertEqual(
+            ucDisabledReason,
+            .uc(state: .disabled, edge: .left, clientReady: false, reason: "secure_input", edgeBlocked: true)
+        )
+
         let stopped = try DaemonEvent.decode(
             jsonLine: #"{"event":"stopped"}"#
         )
@@ -100,6 +124,15 @@ final class WingpaneAppCoreTests: XCTestCase {
         XCTAssertEqual(
             streamingWithExtra,
             .streaming(width: 2340, height: 1080, hz: 60, hidpi: true)
+        )
+
+        // UC event with extra unknown fields
+        let ucWithExtra = try DaemonEvent.decode(
+            jsonLine: #"{"event":"uc","state":"inside","edge":"top","client_ready":true,"edge_blocked":false,"future_field":42,"nested":{"ok":true}}"#
+        )
+        XCTAssertEqual(
+            ucWithExtra,
+            .uc(state: .inside, edge: .top, clientReady: true, reason: nil, edgeBlocked: false)
         )
 
         // Unknown event type should not throw
@@ -207,6 +240,68 @@ final class WingpaneAppCoreTests: XCTestCase {
         XCTAssertEqual(model.iconState, .off)
     }
 
+    func testUcStatusTextMapping() {
+        let model = StatusModel()
+
+        // Default before UC ready: Accessibility service off on tablet
+        XCTAssertEqual(model.ucState, .unavailable)
+        XCTAssertFalse(model.isUcEnabled)
+        XCTAssertEqual(model.ucStatusText, "Android: Accessibility service off on tablet")
+
+        // Ready (armed)
+        model.apply(.uc(state: .armed, edge: .right, clientReady: true, reason: nil, edgeBlocked: false))
+        XCTAssertEqual(model.ucState, .armed)
+        XCTAssertTrue(model.isUcEnabled)
+        XCTAssertEqual(model.ucStatusText, "Android: ready")
+
+        // Inside
+        model.apply(.uc(state: .inside, edge: .right, clientReady: true, reason: nil, edgeBlocked: false))
+        XCTAssertEqual(model.ucState, .inside)
+        XCTAssertTrue(model.isUcEnabled)
+        XCTAssertEqual(model.ucStatusText, "Android: inside")
+
+        // Accessibility service off on tablet (client_ready == false)
+        model.apply(.uc(state: .disabled, edge: .right, clientReady: false, reason: "client_not_ready", edgeBlocked: false))
+        XCTAssertEqual(model.ucState, .disabled)
+        XCTAssertFalse(model.isUcEnabled)
+        XCTAssertEqual(model.ucStatusText, "Android: Accessibility service off on tablet")
+
+        // Edge blocked by another display
+        model.apply(.uc(state: .armed, edge: .left, clientReady: true, reason: nil, edgeBlocked: true))
+        XCTAssertEqual(model.ucEdge, .left)
+        XCTAssertEqual(model.ucStatusText, "Android: Edge blocked by another display")
+
+        // Secure input on
+        model.apply(.uc(state: .disabled, edge: .left, clientReady: true, reason: "secure_input", edgeBlocked: false))
+        XCTAssertEqual(model.ucStatusText, "Android: Secure input on")
+
+        // Permissions with input_monitoring
+        model.apply(.permissions(inputTrusted: true, screenRecording: true, inputMonitoring: false))
+        XCTAssertEqual(model.daemonInputTrusted, true)
+        XCTAssertEqual(model.daemonScreenRecording, true)
+        XCTAssertEqual(model.daemonInputMonitoring, false)
+    }
+
+    func testDaemonCommandSingleLineJsonEncoding() {
+        let enableTrue = DaemonCommand.ucEnable(true).encodeJsonLine()
+        XCTAssertEqual(enableTrue, #"{"cmd":"uc_enable","enabled":true}"# + "\n")
+        XCTAssertEqual(enableTrue.filter { $0 == "\n" }.count, 1)
+
+        let enableFalse = DaemonCommand.ucEnable(false).encodeJsonLine()
+        XCTAssertEqual(enableFalse, #"{"cmd":"uc_enable","enabled":false}"# + "\n")
+        XCTAssertEqual(enableFalse.filter { $0 == "\n" }.count, 1)
+
+        for edge in UcEdge.allCases {
+            let edgeLine = DaemonCommand.ucEdge(edge).encodeJsonLine()
+            XCTAssertEqual(edgeLine, #"{"cmd":"uc_edge","edge":"\#(edge.rawValue)"}"# + "\n")
+            XCTAssertEqual(edgeLine.filter { $0 == "\n" }.count, 1)
+        }
+
+        let ret = DaemonCommand.ucReturn.encodeJsonLine()
+        XCTAssertEqual(ret, #"{"cmd":"uc_return"}"# + "\n")
+        XCTAssertEqual(ret.filter { $0 == "\n" }.count, 1)
+    }
+
     // MARK: - MA-3 AdbLocator Order
 
     func testAdbLocatorStrictOrder() {
@@ -274,24 +369,30 @@ final class WingpaneAppCoreTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let defaultOpts = Options.load(from: defaults)
-        XCTAssertEqual(defaultOpts, Options(hidpi: true, testPattern: false, bitrateMbps: 20))
+        XCTAssertEqual(defaultOpts, Options(hidpi: true, testPattern: false, bitrateMbps: 20, ucEdge: .right))
         XCTAssertEqual(
             defaultOpts.daemonArguments(serial: nil),
-            ["--status-json", "--hidpi", "true", "--bitrate-mbps", "20"]
+            ["--status-json", "--hidpi", "true", "--bitrate-mbps", "20", "--uc-edge", "right"]
         )
 
-        let customOpts = Options(hidpi: false, testPattern: true, bitrateMbps: 30)
+        let customOpts = Options(hidpi: false, testPattern: true, bitrateMbps: 30, ucEdge: .left)
         customOpts.save(to: defaults)
 
         let reloaded = Options.load(from: defaults)
         XCTAssertEqual(reloaded, customOpts)
+        XCTAssertEqual(reloaded.ucEdge, .left)
         XCTAssertEqual(
             reloaded.daemonArguments(serial: "SER99"),
-            ["--status-json", "--hidpi", "false", "--bitrate-mbps", "30", "--test-pattern", "--serial", "SER99"]
+            ["--status-json", "--hidpi", "false", "--bitrate-mbps", "30", "--uc-edge", "left", "--test-pattern", "--serial", "SER99"]
         )
+
+        // Changing ucEdge alone does not change restartRelevant
+        var edgeUpdated = reloaded
+        edgeUpdated.ucEdge = .top
+        XCTAssertEqual(reloaded.restartRelevant, edgeUpdated.restartRelevant)
     }
 
-    // MARK: - DaemonController with Fake Daemon Script (Deliverable 3)
+    // MARK: - DaemonController with Fake Daemon Script (Deliverable 3 & WP-U7)
 
     func testDaemonControllerStreamsEventsAndStopsWithSIGINT() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
@@ -309,6 +410,7 @@ final class WingpaneAppCoreTests: XCTestCase {
         let signalFile = tempDir.appendingPathComponent("signal.txt")
         let argsFile = tempDir.appendingPathComponent("args.txt")
         let adbFile = tempDir.appendingPathComponent("adb.txt")
+        let stdinFile = tempDir.appendingPathComponent("stdin.txt")
 
         let suiteName = "io.wingpane.tests.controller.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -331,8 +433,10 @@ final class WingpaneAppCoreTests: XCTestCase {
                 "FAKE_DAEMON_SIGNAL_FILE": signalFile.path,
                 "FAKE_DAEMON_ARGS_FILE": argsFile.path,
                 "FAKE_DAEMON_ADB_FILE": adbFile.path,
+                "FAKE_DAEMON_STDIN_FILE": stdinFile.path,
             ],
-            stopGracePeriod: 2.0
+            stopGracePeriod: 2.0,
+            cursorRestore: {}
         )
 
         XCTAssertTrue(controller.start())
@@ -351,20 +455,35 @@ final class WingpaneAppCoreTests: XCTestCase {
         let recordedAdb = try String(contentsOf: adbFile, encoding: .utf8)
         XCTAssertEqual(recordedAdb, fakeAdbPath)
         let recordedArgs = try String(contentsOf: argsFile, encoding: .utf8)
-        XCTAssertEqual(recordedArgs, "--status-json --hidpi true --bitrate-mbps 20")
+        XCTAssertEqual(recordedArgs, "--status-json --hidpi true --bitrate-mbps 20 --uc-edge right")
 
-        // Changing options while running restarts the daemon with new flags (MA-8)
-        controller.setOptions(Options(hidpi: false, testPattern: true, bitrateMbps: 30))
+        // Changing ucEdge while running must NOT restart the daemon (D-20, WP-U7)
+        controller.setOptions(Options(hidpi: true, testPattern: false, bitrateMbps: 20, ucEdge: .left))
+        XCTAssertEqual(controller.restartCount, 0)
+        XCTAssertEqual(Options.load(from: defaults).ucEdge, .left)
+
+        let stdinDeadline = Date().addingTimeInterval(1.0)
+        while ((try? String(contentsOf: stdinFile, encoding: .utf8))?.contains(#"{"cmd":"uc_edge","edge":"left"}"#) != true)
+            && Date() < stdinDeadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        XCTAssertEqual(
+            try? String(contentsOf: stdinFile, encoding: .utf8),
+            #"{"cmd":"uc_edge","edge":"left"}"# + "\n"
+        )
+
+        // Changing restart-relevant options while running restarts the daemon with new flags (MA-8)
+        controller.setOptions(Options(hidpi: false, testPattern: true, bitrateMbps: 30, ucEdge: .left))
         XCTAssertEqual(controller.restartCount, 1)
 
         let restartDeadline = Date().addingTimeInterval(2.0)
-        while (try? String(contentsOf: argsFile, encoding: .utf8)) != "--status-json --hidpi false --bitrate-mbps 30 --test-pattern"
+        while (try? String(contentsOf: argsFile, encoding: .utf8)) != "--status-json --hidpi false --bitrate-mbps 30 --uc-edge left --test-pattern"
             && Date() < restartDeadline {
             Thread.sleep(forTimeInterval: 0.02)
         }
         XCTAssertEqual(
             try String(contentsOf: argsFile, encoding: .utf8),
-            "--status-json --hidpi false --bitrate-mbps 30 --test-pattern"
+            "--status-json --hidpi false --bitrate-mbps 30 --uc-edge left --test-pattern"
         )
 
         // Now stop and verify SIGINT was sent and status transitions to Stopped

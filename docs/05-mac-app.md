@@ -74,12 +74,17 @@ Giới hạn bridge U4 ở commit `6df577d` (chưa sửa trong phạm vi daemon)
  Start / Stop                          ⌘S
  Open app on phone                     (adb shell am start …)
  ──────────────────────────
+ Control Android ▸  Enabled ✓            (gửi uc_enable; disabled khi uc=unavailable)
+                    Edge ▸ Left · Right ✓ · Top · Bottom
+                    Return to Mac now      (chỉ khi inside; gửi uc_return)
+                    ─ Ctrl+⌥+Esc: luôn trả chuột về Mac
+                    <trạng thái 1 dòng>
  Options ▸  HiDPI ✓ · Test pattern · Bitrate ▸ 10/20/30 Mbps
- Permissions ▸  Screen Recording ✓/✗ · Accessibility ✓/✗ (bấm → mở System Settings)
+ Permissions ▸  Screen Recording ✓/✗ · Accessibility ✓/✗ · Input Monitoring ✓/✗ (bấm → mở System Settings)
  Launch at login                        (SMAppService.mainApp)
  ──────────────────────────
  Quit Wingpane                         ⌘Q
 ```
 
-* **MA-7:** Trạng thái 1 dòng lấy từ sự kiện mới nhất: `adb not found` · `Connect your phone (USB debugging on)` · `Allow USB debugging on the phone` · `Several devices — choose one` · `Waiting for the Wingpane app on <model>` · `Streaming W×H · N fps` · `Stopped`.
-* **MA-8:** Đổi Options khi đang chạy → restart daemon với cờ mới.
+* **MA-7:** Trạng thái 1 dòng lấy từ sự kiện mới nhất: `adb not found` · `Connect your phone (USB debugging on)` · `Allow USB debugging on the phone` · `Several devices — choose one` · `Waiting for the Wingpane app on <model>` · `Streaming W×H · N fps` · `Stopped`. Dòng trạng thái trong `Control Android`: `Android: ready` · `Android: inside` · `Android: Accessibility service off on tablet` · `Android: Edge blocked by another display` · `Android: Secure input on`.
+* **MA-8:** Đổi Options khi đang chạy → restart daemon với cờ mới (ngoại lệ D-20: đổi `ucEdge` gửi lệnh stdin `uc_edge`, không restart daemon). Khi daemon thoát, khi Quit app, hoặc khi `uc.state == inside` mà quá 3 s không có dòng stdout → `SIGKILL` daemon và gọi `CursorSafety.restore()` (`CGAssociateMouseAndMouseCursorPosition(1)` + warp về giữa màn chính, D-10.5).
