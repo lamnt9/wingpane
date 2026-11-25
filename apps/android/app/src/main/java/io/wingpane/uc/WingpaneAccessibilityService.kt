@@ -3,13 +3,35 @@ package io.wingpane.uc
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.InputMethod
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Path
+import android.view.inputmethod.EditorInfo
 import android.view.accessibility.AccessibilityEvent
 import java.lang.ref.WeakReference
 
 /** Standalone U1 injector. It has no dependency on a Mac connection or protocol traffic. */
 class WingpaneAccessibilityService : AccessibilityService() {
+    var editorFocused: Boolean = false
+        private set
+
+    // The framework only calls this on API 33+, where InputMethod exists.
+    @SuppressLint("NewApi")
+    override fun onCreateInputMethod(): InputMethod = object : InputMethod(this) {
+        override fun onStartInput(editorInfo: EditorInfo, restarting: Boolean) {
+            super.onStartInput(editorInfo, restarting)
+            editorFocused = true
+        }
+        override fun onFinishInput() {
+            editorFocused = false
+            super.onFinishInput()
+        }
+    }
+
+    fun setRemoteKeyboardActive(active: Boolean) {
+        softKeyboardController.showMode = if (active) SHOW_MODE_HIDDEN else SHOW_MODE_AUTO
+    }
     interface UcInjector {
         fun move(dx: Float, dy: Float, nowMs: Long = android.os.SystemClock.uptimeMillis())
         fun button(button: Int, down: Boolean, nowMs: Long = android.os.SystemClock.uptimeMillis())
@@ -62,7 +84,7 @@ class WingpaneAccessibilityService : AccessibilityService() {
         Registry.ref=WeakReference(this)
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) { }
-    override fun onInterrupt() { planner.cancelAll().forEach(adapter::submit); overlay?.hide(); Registry.ref=null }
+    override fun onInterrupt() { planner.cancelAll().forEach(adapter::submit); overlay?.hide(); setRemoteKeyboardActive(false); Registry.ref=null }
     override fun onUnbind(intent: Intent?): Boolean { onInterrupt(); return super.onUnbind(intent) }
     override fun onDestroy() { onInterrupt(); super.onDestroy() }
     fun injector(): UcInjector = injector
