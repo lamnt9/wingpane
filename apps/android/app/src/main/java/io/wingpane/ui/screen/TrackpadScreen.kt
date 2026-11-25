@@ -79,23 +79,31 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
     SystemImeBridge(onEvents = onEvents, requestFocus = imeOpen)
     if (panel == "Keyboard") {
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("1234567890-=", "QWERTYUIOP", "ASDFGHJKL;", "ZXCVBNM,./").forEach { row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    row.forEach { c -> Key(c.toString(), Modifier.weight(1f)) { tap(hidUsage(c)) } }
+            @Composable
+            fun KRow(keys: List<MacKey>) = Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                keys.forEach { k ->
+                    if (k.spacer) { Box(Modifier.weight(k.weight).height(48.dp)); return@forEach }
+                    if (k.modifier) {
+                        val state = remember(modTick) { keyboard.modifierState(k.usage) }
+                        Key(if (state == 2) "${k.label}🔒" else k.label, Modifier.weight(k.weight), selected = state > 0) {
+                            performWingpaneHaptic(context, view); keyboard.modifierTap(k.usage); modTick++
+                        }
+                    } else Key(k.label, Modifier.weight(k.weight)) { tap(k.usage) }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf("⌘" to 0xE3, "⌥" to 0xE2, "⌃" to 0xE0, "⇧" to 0xE1).forEach { (label, usage) ->
-                    val state = remember(modTick) { keyboard.modifierState(usage) }
-                    Key(if (state == 2) "$label🔒" else label, Modifier.weight(1f), selected = state > 0) {
-                        performWingpaneHaptic(context, view); keyboard.modifierTap(usage); modTick++
-                    }
-                }
-                Key("Space", Modifier.weight(3f)) { tap(0x2C) }
-                Key("Tab", Modifier.weight(1f)) { tap(0x2B) }
-                Key("⌫", Modifier.weight(1f)) { tap(0x2A) }
-                Key("↵", Modifier.weight(1f)) { tap(0x28) }
-            }
+            KRow(listOf(MacKey("esc", 0x29, 1.4f)) + "1234567890-=".map { MacKey(it.toString(), hidUsage(it)) } + MacKey("⌫", 0x2A, 1.6f))
+            KRow(listOf(MacKey("tab", 0x2B, 1.6f)) + "QWERTYUIOP".map { MacKey(it.toString(), hidUsage(it)) } +
+                listOf(MacKey("[", 0x2F), MacKey("]", 0x30), MacKey("\\", 0x31)))
+            KRow(listOf(MacKey("", 0x00, 1.0f, spacer = true)) + "ASDFGHJKL".map { MacKey(it.toString(), hidUsage(it)) } +
+                listOf(MacKey(";", 0x33), MacKey("'", 0x34), MacKey("return", 0x28, 1.9f)))
+            KRow(listOf(MacKey("⇧", 0xE1, 2.2f, modifier = true)) + "ZXCVBNM".map { MacKey(it.toString(), hidUsage(it)) } +
+                listOf(MacKey(",", 0x36), MacKey(".", 0x37), MacKey("/", 0x38), MacKey("⇧", 0xE5, 2.2f, modifier = true)))
+            KRow(listOf(
+                MacKey("⌃", 0xE0, 1.2f, modifier = true), MacKey("⌥", 0xE2, 1.2f, modifier = true), MacKey("⌘", 0xE3, 1.5f, modifier = true),
+                MacKey("space", 0x2C, 6.0f),
+                MacKey("⌘", 0xE7, 1.5f, modifier = true), MacKey("⌥", 0xE6, 1.2f, modifier = true),
+                MacKey("←", 0x50, 1.0f), MacKey("↓", 0x51, 1.0f), MacKey("↑", 0x52, 1.0f), MacKey("→", 0x4F, 1.0f),
+            ))
         }
     } else if (panel == "Numpad") {
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -112,6 +120,8 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
     }
     }
 }
+
+private data class MacKey(val label: String, val usage: Int, val weight: Float = 1f, val modifier: Boolean = false, val spacer: Boolean = false)
 
 @Composable
 private fun Key(label: String, modifier: Modifier, selected: Boolean = false, onClick: () -> Unit) {
