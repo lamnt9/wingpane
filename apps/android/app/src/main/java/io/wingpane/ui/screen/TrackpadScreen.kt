@@ -6,18 +6,14 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.Text
 import androidx.compose.foundation.clickable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
@@ -84,62 +80,7 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
         Key(stringResource(if (imeOpen) R.string.panel_done else R.string.panel_ime), Modifier.weight(1f), selected = imeOpen) { imeOpen = !imeOpen }
     }
     SystemImeBridge(onEvents = onEvents, requestFocus = imeOpen)
-    if (panel == "Trackpad") {
-        val currentOnEvents by rememberUpdatedState(onEvents)
-        var leftHeld by remember { mutableStateOf(false) }
-        var rightHeld by remember { mutableStateOf(false) }
-        fun pressButton(button: UByte) {
-            val changed = if (button == 0u.toUByte()) (!leftHeld).also { leftHeld = true } else (!rightHeld).also { rightHeld = true }
-            if (changed) {
-                detector.setButtonHeld(leftHeld || rightHeld)
-                performWingpaneHaptic(context, view)
-                currentOnEvents(listOf(InputEvent.MouseButton(button, true)))
-            }
-        }
-        fun releaseButton(button: UByte) {
-            val changed = if (button == 0u.toUByte()) leftHeld.also { leftHeld = false } else rightHeld.also { rightHeld = false }
-            if (changed) {
-                detector.setButtonHeld(leftHeld || rightHeld)
-                currentOnEvents(listOf(InputEvent.MouseButton(button, false)))
-            }
-        }
-        DisposableEffect(detector) {
-            onDispose {
-                releaseButton(0u)
-                releaseButton(1u)
-            }
-        }
-        val colors = WingpaneTheme.colors
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .background(colors.surface2),
-        ) {
-            MouseButton(
-                label = stringResource(R.string.trackpad_left),
-                button = 0u,
-                held = leftHeld,
-                onPress = { pressButton(0u) },
-                onRelease = { releaseButton(0u) },
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .fillMaxHeight()
-                    .background(colors.border),
-            )
-            MouseButton(
-                label = stringResource(R.string.trackpad_right),
-                button = 1u,
-                held = rightHeld,
-                onPress = { pressButton(1u) },
-                onRelease = { releaseButton(1u) },
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-        }
-    } else if (panel == "Keyboard") {
+    if (panel == "Keyboard") {
         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
             @Composable
             fun KRow(keys: List<MacKey>) = Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -185,48 +126,6 @@ fun TrackpadScreen(detector: TrackpadGestureDetector, onEvents: (List<InputEvent
 }
 
 private data class MacKey(val label: String, val usage: Int, val weight: Float = 1f, val modifier: Boolean = false, val caps: Boolean = false, val small: Boolean = false)
-
-@Composable
-private fun MouseButton(
-    label: String,
-    button: UByte,
-    held: Boolean,
-    onPress: () -> Unit,
-    onRelease: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = WingpaneTheme.colors
-    val currentOnPress by rememberUpdatedState(onPress)
-    val currentOnRelease by rememberUpdatedState(onRelease)
-    Box(
-        modifier = modifier
-            .background(if (held) colors.primary else colors.surface2)
-            .pointerInput(button) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    currentOnPress()
-                    try {
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            event.changes.forEach { it.consume() }
-                            if (event.changes.none { it.pressed }) break
-                        }
-                    } finally {
-                        currentOnRelease()
-                    }
-                }
-            },
-        contentAlignment = androidx.compose.ui.Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = if (held) colors.onPrimary else colors.text,
-            style = WingpaneTheme.typography.bodyStrong,
-            maxLines = 1,
-        )
-    }
-}
 
 @Composable
 private fun Key(label: String, modifier: Modifier, selected: Boolean = false, small: Boolean = false, onClick: () -> Unit) {

@@ -29,6 +29,8 @@ struct WingpaneApp: App {
     @State private var accessibilityGranted: Bool = PermissionsChecker.hasAccessibilityPermission(prompt: false)
     @State private var inputMonitoringGranted: Bool = PermissionsChecker.hasInputMonitoringPermission()
     @State private var launchAtLoginEnabled: Bool = (SMAppService.mainApp.status == .enabled)
+    // Re-renders the menu when the language changes; L(...) reads the same UserDefaults key.
+    @AppStorage(AppLanguage.defaultsKey) private var languageRaw: String = AppLanguage.en.rawValue
 
     init() {
         let model = StatusModel()
@@ -49,12 +51,13 @@ struct WingpaneApp: App {
 
     @ViewBuilder
     private var menuContent: some View {
+        let _ = languageRaw
         Text(statusModel.menuHeaderTitle)
-            .help(statusModel.statusText == "adb not found" ? AdbLocator.installHint : "")
+            .help(statusModel.lastEvent == .adbMissing ? AdbLocator.installHint : "")
 
-        Menu("Device: \(statusModel.deviceDisplayTitle)") {
+        Menu(L("Device: ", "Thiết bị: ") + statusModel.deviceDisplayTitle) {
             if statusModel.devices.isEmpty {
-                Text("No devices")
+                Text(L("No devices", "Không có thiết bị"))
                     .disabled(true)
             } else {
                 ForEach(statusModel.devices) { device in
@@ -68,24 +71,24 @@ struct WingpaneApp: App {
 
         Divider()
 
-        Button(statusModel.isRunning ? "Stop" : "Start") {
+        Button(statusModel.isRunning ? L("Stop", "Dừng") : L("Start", "Bắt đầu")) {
             controller.toggleStartStop()
         }
         .keyboardShortcut("s", modifiers: .command)
 
-        Button("Open app on phone") {
+        Button(L("Open app on phone", "Mở app trên tablet")) {
             _ = controller.openAppOnPhone()
         }
 
         Divider()
 
-        Menu("Control Android") {
-            Button(statusModel.isUcEnabled ? "Enabled ✓" : "Enabled") {
+        Menu(L("Control Android", "Điều khiển Android")) {
+            Button(statusModel.isUcEnabled ? L("Enabled ✓", "Đang bật ✓") : L("Enabled", "Bật")) {
                 controller.send(command: .ucEnable(!statusModel.isUcEnabled))
             }
             .disabled(statusModel.ucState == .unavailable)
 
-            Menu("Edge") {
+            Menu(L("Edge", "Cạnh")) {
                 ForEach(UcEdge.allCases, id: \.self) { edge in
                     let isCurrent = (controller.options.ucEdge == edge)
                     Button(isCurrent ? "\(edge.displayTitle) ✓" : edge.displayTitle) {
@@ -97,28 +100,28 @@ struct WingpaneApp: App {
             }
 
             if statusModel.ucState == .inside {
-                Button("Return to Mac now") {
+                Button(L("Return to Mac now", "Trả chuột về Mac ngay")) {
                     controller.send(command: .ucReturn)
                 }
             }
 
             Divider()
 
-            Text("Ctrl+⌥+Esc: luôn trả chuột về Mac")
+            Text(L("Ctrl+⌥+Esc: always returns the pointer to Mac", "Ctrl+⌥+Esc: luôn trả chuột về Mac"))
                 .disabled(true)
 
             Text(statusModel.ucStatusText)
                 .disabled(true)
         }
 
-        Menu("Options") {
+        Menu(L("Options", "Tuỳ chọn")) {
             Button(controller.options.hidpi ? "HiDPI ✓" : "HiDPI") {
                 var updated = controller.options
                 updated.hidpi.toggle()
                 controller.setOptions(updated)
             }
 
-            Button(controller.options.testPattern ? "Test pattern ✓" : "Test pattern") {
+            Button(controller.options.testPattern ? L("Test pattern ✓", "Hình mẫu thử ✓") : L("Test pattern", "Hình mẫu thử")) {
                 var updated = controller.options
                 updated.testPattern.toggle()
                 controller.setOptions(updated)
@@ -136,43 +139,51 @@ struct WingpaneApp: App {
             }
         }
 
-        Menu("Permissions") {
+        Menu(L("Permissions", "Quyền")) {
             // Daemon-reported state wins: macOS grants are per process and the daemon does the injecting.
             let screenOK = statusModel.daemonScreenRecording ?? screenRecordingGranted
             let accessOK = statusModel.daemonInputTrusted ?? accessibilityGranted
             let inputMonitorOK = statusModel.daemonInputMonitoring ?? inputMonitoringGranted
-            Button("Screen Recording \(screenOK ? "✓" : "✗")") {
+            Button(L("Screen Recording", "Ghi màn hình") + (screenOK ? " ✓" : " ✗")) {
                 openSettingsOnce(PermissionsChecker.screenRecordingSettingsURL)
             }
 
-            Button("Accessibility \(accessOK ? "✓" : "✗")") {
+            Button(L("Accessibility", "Trợ năng") + (accessOK ? " ✓" : " ✗")) {
                 openSettingsOnce(PermissionsChecker.accessibilitySettingsURL)
             }
 
-            Button("Input Monitoring \(inputMonitorOK ? "✓" : "✗")") {
+            Button(L("Input Monitoring", "Theo dõi đầu vào") + (inputMonitorOK ? " ✓" : " ✗")) {
                 openSettingsOnce(PermissionsChecker.inputMonitoringSettingsURL)
             }
         }
 
-        Button(launchAtLoginEnabled ? "Launch at login ✓" : "Launch at login") {
+        Button(launchAtLoginEnabled ? L("Launch at login ✓", "Mở cùng máy ✓") : L("Launch at login", "Mở cùng máy")) {
             toggleLaunchAtLogin()
+        }
+
+        Menu("Language / Ngôn ngữ") {
+            ForEach(AppLanguage.allCases, id: \.self) { language in
+                Button(languageRaw == language.rawValue ? "\(language.displayName) ✓" : language.displayName) {
+                    languageRaw = language.rawValue
+                }
+            }
         }
 
         Divider()
 
-        Button("About Wingpane") {
+        Button(L("About Wingpane", "Giới thiệu Wingpane")) {
             let info = Bundle.main.infoDictionary
             NSApp.activate(ignoringOtherApps: true)
             NSApp.orderFrontStandardAboutPanel(options: [
                 .applicationName: "Wingpane",
                 .applicationVersion: info?["CFBundleShortVersionString"] as? String ?? "",
                 .version: info?["CFBundleVersion"] as? String ?? "",
-                .credits: NSAttributedString(string: Self.aboutText),
+                .credits: NSAttributedString(string: L(Self.aboutTextEN, Self.aboutTextVI)),
                 NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): info?["NSHumanReadableCopyright"] as? String ?? "Copyright © 2026 Wingpane. All rights reserved.",
             ])
         }
 
-        Button("Quit Wingpane") {
+        Button(L("Quit Wingpane", "Thoát Wingpane")) {
             controller.stop()
             CursorSafety.restore()
             NSApplication.shared.terminate(nil)
@@ -180,15 +191,26 @@ struct WingpaneApp: App {
         .keyboardShortcut("q", modifiers: .command)
     }
 
-    private static let aboutText = """
+    private static let aboutTextEN = """
     Turn your Android tablet into a Mac secondary display, pen tablet and trackpad.
+
+    How to use
+    1. Plug in the tablet (USB debugging on), open Wingpane on it.
+    2. Permissions menu: enable Screen Recording and Accessibility for Wingpane and wingpaned.
+    3. Display: tablet is a second screen. Pen: graphics tablet. Trackpad: 1–5 finger gestures (click, scroll, swipes, pinch). Keyboard/Numpad/IME: type into the Mac. Only Display mode keeps the second screen.
+    4. Without Accessibility the Mac ignores pen, trackpad and keyboard.
+
+    https://github.com/lamnt9/wingpane
+    """
+
+    private static let aboutTextVI = """
     Biến tablet Android thành màn hình phụ, bảng vẽ và trackpad cho Mac.
 
-    How to use / Cách dùng
-    1. Plug in the tablet (USB debugging on), open Wingpane on it. / Cắm tablet (bật USB debugging), mở app Wingpane trên tablet.
-    2. Permissions menu: enable Screen Recording and Accessibility for Wingpane and wingpaned. / Menu Permissions: bật Screen Recording và Accessibility cho Wingpane và wingpaned.
-    3. Display: tablet is a second screen. Pen: graphics tablet. Trackpad: move, click, scroll, 3-finger swipes. Keyboard/Numpad/IME: type into the Mac. / Display: màn hình phụ. Pen: bảng vẽ. Trackpad: di chuột, click, cuộn, vuốt 3 ngón. Keyboard/Numpad/IME: gõ vào Mac.
-    4. Without Accessibility the Mac ignores pen, trackpad and keyboard. / Thiếu Accessibility thì Mac bỏ qua bút, trackpad và bàn phím.
+    Cách dùng
+    1. Cắm tablet (bật USB debugging), mở app Wingpane trên tablet.
+    2. Menu Quyền: bật Ghi màn hình và Trợ năng cho Wingpane và wingpaned.
+    3. Display: màn hình phụ. Pen: bảng vẽ. Trackpad: cử chỉ 1–5 ngón (click, cuộn, vuốt, chụm). Keyboard/Numpad/IME: gõ vào Mac. Chỉ chế độ Display mới giữ màn hình thứ hai.
+    4. Thiếu Trợ năng thì Mac bỏ qua bút, trackpad và bàn phím.
 
     https://github.com/lamnt9/wingpane
     """

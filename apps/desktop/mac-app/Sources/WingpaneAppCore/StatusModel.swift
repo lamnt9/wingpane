@@ -12,7 +12,7 @@ public enum IconState: String, Equatable, Sendable {
 public final class StatusModel: ObservableObject, @unchecked Sendable {
     private let lock = NSLock()
 
-    private var _statusText: String = "Stopped"
+    private var _statusText = LocalizedText("Stopped", "Đã dừng")
     private var _iconState: IconState = .off
     private var _devices: [AdbDevice] = []
     private var _currentDevice: AdbDevice?
@@ -58,18 +58,18 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
         lock.unlock()
 
         if state == .inside {
-            return "Android: inside"
+            return L("Android: inside", "Android: đang điều khiển")
         }
         if reason == "secure_input" {
-            return "Android: Secure input on"
+            return L("Android: Secure input on", "Android: Mac đang bật nhập bảo mật")
         }
         if edgeBlocked {
-            return "Android: Edge blocked by another display"
+            return L("Android: Edge blocked by another display", "Android: cạnh bị màn hình khác chặn")
         }
         if !clientReady || reason == "client_not_ready" {
-            return "Android: Accessibility service off on tablet"
+            return L("Android: Accessibility service off on tablet", "Android: chưa bật dịch vụ Trợ năng trên tablet")
         }
-        return "Android: ready"
+        return L("Android: ready", "Android: sẵn sàng")
     }
 
     // While a menu is open, republishing makes SwiftUI rebuild it and closes open submenus.
@@ -93,10 +93,18 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
 
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
+    private static func waitingText(_ device: String?) -> LocalizedText {
+        LocalizedText("Waiting for the Wingpane app on \(device ?? "phone")", "Đang chờ app Wingpane trên \(device ?? "tablet")")
+    }
+
+    private static func streamingText(_ width: Int, _ height: Int, _ fps: Int) -> LocalizedText {
+        LocalizedText("Streaming \(width)×\(height) · \(fps) fps", "Đang truyền \(width)×\(height) · \(fps) fps")
+    }
+
     public var statusText: String {
         lock.lock()
         defer { lock.unlock() }
-        return _statusText
+        return _statusText.text()
     }
 
     public var iconState: IconState {
@@ -165,7 +173,7 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
         if allDevices.count == 1 {
             return allDevices[0].displayName
         }
-        return "None"
+        return L("None", "Không có")
     }
 
     public func setRunning(_ running: Bool) {
@@ -182,11 +190,11 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
         switch event {
         case .starting:
             _iconState = .waiting
-            _statusText = "Connect your phone (USB debugging on)"
+            _statusText = LocalizedText("Connect your phone (USB debugging on)", "Cắm tablet (bật USB debugging)")
 
         case .adbMissing:
             _iconState = .error
-            _statusText = "adb not found"
+            _statusText = LocalizedText("adb not found", "Không tìm thấy adb")
 
         case .waitingDevice(let reason, let devices):
             _devices = devices
@@ -197,13 +205,13 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _iconState = .waiting
             switch reason {
             case .none:
-                _statusText = "Connect your phone (USB debugging on)"
+                _statusText = LocalizedText("Connect your phone (USB debugging on)", "Cắm tablet (bật USB debugging)")
             case .unauthorized:
-                _statusText = "Allow USB debugging on the phone"
+                _statusText = LocalizedText("Allow USB debugging on the phone", "Cho phép USB debugging trên tablet")
             case .multiple:
-                _statusText = "Several devices — choose one"
+                _statusText = LocalizedText("Several devices — choose one", "Nhiều thiết bị — chọn một")
             case .unknown:
-                _statusText = "Connect your phone (USB debugging on)"
+                _statusText = LocalizedText("Connect your phone (USB debugging on)", "Cắm tablet (bật USB debugging)")
             }
 
         case .device(let serial, let model):
@@ -218,18 +226,16 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _streamHeight = nil
             _fps = 0
             _iconState = .waiting
-            _statusText = "Waiting for the Wingpane app on \(active.displayName)"
+            _statusText = Self.waitingText(active.displayName)
 
         case .listening(let port):
             _listeningPort = port
             _iconState = .waiting
-            let label = _currentDevice?.displayName ?? "phone"
-            _statusText = "Waiting for the Wingpane app on \(label)"
+            _statusText = Self.waitingText(_currentDevice?.displayName)
 
         case .clientConnected:
             _iconState = .waiting
-            let label = _currentDevice?.displayName ?? "phone"
-            _statusText = "Waiting for the Wingpane app on \(label)"
+            _statusText = Self.waitingText(_currentDevice?.displayName)
 
         case .streaming(let width, let height, let hz, let hidpi):
             _streamWidth = width
@@ -238,13 +244,13 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _streamHiDPI = hidpi
             _fps = 0
             _iconState = .streaming
-            _statusText = "Streaming \(width)×\(height) · 0 fps"
+            _statusText = Self.streamingText(width, height, 0)
 
         case .stats(let fps, _, _, _):
             _fps = fps
             if let width = _streamWidth, let height = _streamHeight {
                 _iconState = .streaming
-                _statusText = "Streaming \(width)×\(height) · \(fps) fps"
+                _statusText = Self.streamingText(width, height, fps)
             }
 
         case .clientDisconnected:
@@ -258,12 +264,11 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _ucReason = nil
             _ucEdgeBlocked = false
             _iconState = .waiting
-            let label = _currentDevice?.displayName ?? "phone"
-            _statusText = "Waiting for the Wingpane app on \(label)"
+            _statusText = Self.waitingText(_currentDevice?.displayName)
 
         case .error(let message):
             _iconState = .error
-            _statusText = message
+            _statusText = LocalizedText(verbatim: message)
 
         case .stopped:
             _streamWidth = nil
@@ -272,7 +277,7 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _streamHiDPI = nil
             _fps = 0
             _iconState = .off
-            _statusText = "Stopped"
+            _statusText = LocalizedText("Stopped", "Đã dừng")
             _daemonInputTrusted = nil
             _daemonScreenRecording = nil
             _daemonInputMonitoring = nil

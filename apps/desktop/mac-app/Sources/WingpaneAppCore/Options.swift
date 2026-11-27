@@ -9,13 +9,13 @@ public enum UcEdge: String, Codable, Equatable, Sendable, CaseIterable {
     public var displayTitle: String {
         switch self {
         case .left:
-            return "Left"
+            return L("Left", "Trái")
         case .right:
-            return "Right"
+            return L("Right", "Phải")
         case .top:
-            return "Top"
+            return L("Top", "Trên")
         case .bottom:
-            return "Bottom"
+            return L("Bottom", "Dưới")
         }
     }
 }

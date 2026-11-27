@@ -498,3 +498,24 @@ final class WingpaneAppCoreTests: XCTestCase {
         XCTAssertEqual(recordedSignal, "SIGINT")
     }
 }
+
+final class LocalizationTests: XCTestCase {
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: AppLanguage.defaultsKey)
+        super.tearDown()
+    }
+
+    func testStatusTextFollowsLanguageWithoutNewEvents() {
+        UserDefaults.standard.removeObject(forKey: AppLanguage.defaultsKey)
+        XCTAssertEqual(AppLanguage.current, .en)
+        let model = StatusModel()
+        model.apply(.streaming(width: 2340, height: 1080, hz: 60, hidpi: false))
+        XCTAssertEqual(model.statusText, "Streaming 2340×1080 · 0 fps")
+        AppLanguage.current = .vi
+        XCTAssertEqual(model.statusText, "Đang truyền 2340×1080 · 0 fps")
+        XCTAssertEqual(UcEdge.left.displayTitle, "Trái")
+        XCTAssertEqual(L("Stop", "Dừng"), "Dừng")
+        model.apply(.error(message: "Capture permission denied"))
+        XCTAssertEqual(model.statusText, "Capture permission denied")
+    }
+}
