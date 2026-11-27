@@ -12,6 +12,7 @@ pub use input::{GestureKind, InputEvent, InputPacket, ScrollPhase, TouchPhase};
 
 pub const FEATURE_UNIVERSAL_CONTROL: u32 = 1 << 8;
 pub const FEATURE_CLIPBOARD_TEXT: u32 = 1 << 9;
+pub const FEATURE_EXTENDED_GESTURES: u32 = 1 << 10;
 pub const UC_STATUS_SERVICE_CONNECTED: u32 = 1 << 0;
 pub const UC_STATUS_GESTURES_OK: u32 = 1 << 1;
 pub const UC_STATUS_IME_CONNECTION: u32 = 1 << 2;
@@ -116,6 +117,16 @@ mod tests {
                 ts_us: 6,
                 event: e,
             }));
+        }
+    }
+
+    #[test]
+    fn extended_gesture_variants_roundtrip() {
+        let gestures = [GestureKind::ThreeFingerTap, GestureKind::Swipe4Up,
+            GestureKind::Swipe4Down, GestureKind::Swipe4Left, GestureKind::Swipe4Right,
+            GestureKind::FiveFingerPinchIn, GestureKind::FiveFingerSpread];
+        for gesture in gestures {
+            roundtrip(Packet::Input(InputPacket { seq: 10, ts_us: 20, event: InputEvent::Gesture(gesture) }));
         }
     }
     #[test]

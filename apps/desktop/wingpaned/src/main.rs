@@ -191,13 +191,15 @@ const FEATURE_KEYBOARD: u32 = 1 << 3;
 const FEATURE_TEXT: u32 = 1 << 4;
 const FEATURE_PEN_CONFIG: u32 = 1 << 5;
 const FEATURE_VIDEO_SUSPEND: u32 = 1 << 7;
+const FEATURE_EXTENDED_GESTURES: u32 = 1 << 10;
 const HOST_INPUT_FEATURES: u32 = FEATURE_PEN_PRESSURE
     | FEATURE_POINTER_RELATIVE
     | FEATURE_GESTURE
     | FEATURE_KEYBOARD
     | FEATURE_TEXT
     | FEATURE_PEN_CONFIG
-    | FEATURE_VIDEO_SUSPEND;
+    | FEATURE_VIDEO_SUSPEND
+    | FEATURE_EXTENDED_GESTURES;
 
 impl InputSink for NativeInputSink {
     fn pointer(&self, x: f32, y: f32, phase: TouchPhase) {
@@ -290,6 +292,16 @@ impl InputSink for NativeInputSink {
         for chunk in wingpane_proto::utf16_chunks(text) {
             unsafe { wp_input_text(chunk.as_ptr(), chunk.len()) }
         }
+    }
+    fn launch_app(&self, name: &str) {
+        let name = name.to_owned();
+        std::thread::spawn(move || {
+            match std::process::Command::new("open").args(["-a", &name]).status() {
+                Ok(status) if status.success() => {}
+                Ok(status) => eprintln!("failed to launch app {name}: {status}"),
+                Err(error) => eprintln!("failed to launch app {name}: {error}"),
+            }
+        });
     }
 }
 unsafe fn request_keyframe(handle: u64) {

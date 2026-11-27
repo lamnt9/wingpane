@@ -103,6 +103,12 @@ pub fn gesture_shortcut(gesture: wingpane_proto::GestureKind) -> Option<(u16, u8
         Swipe3Down => Some((0x51, 1)),
         Swipe3Left => Some((0x50, 1)),
         Swipe3Right => Some((0x4f, 1)),
+        ThreeFingerTap => Some((0x07, 0x09)),
+        Swipe4Up => Some((0x52, 1)),
+        Swipe4Down => Some((0x51, 1)),
+        Swipe4Left => Some((0x50, 1)),
+        Swipe4Right => Some((0x4f, 1)),
+        FiveFingerSpread => Some((0x44, 0)),
         PinchZoom(scale) => Some((if scale >= 1.0 { 0x2e } else { 0x2d }, 8)),
         _ => None,
     }
@@ -131,6 +137,7 @@ pub trait InputSink: Send {
     fn scroll(&self, _dx: f32, _dy: f32) {}
     fn key(&self, _hid: u16, _down: bool, _mods: u8) {}
     fn text(&self, _text: &str) {}
+    fn launch_app(&self, _name: &str) {}
     fn set_mode(&self, _mode: wingpane_proto::Mode) {}
 }
 
@@ -239,6 +246,8 @@ impl<'a> InputRouter<'a> {
             InputEvent::Gesture(gesture) if self.mode == Mode::TrackpadKeyboard => {
                 if let Some((usage, modifiers)) = gesture_shortcut(gesture) {
                     key_tap(self.sink, usage, modifiers)
+                } else if gesture == wingpane_proto::GestureKind::FiveFingerPinchIn {
+                    self.sink.launch_app("Apps")
                 } else if gesture == wingpane_proto::GestureKind::Tap {
                     self.sink.button(0, true);
                     self.sink.button(0, false)
@@ -352,7 +361,49 @@ mod gesture_shortcut_tests {
         assert_eq!(gesture_shortcut(Swipe3Right), Some((0x4f, 1)));
         assert_eq!(gesture_shortcut(PinchZoom(1.15)), Some((0x2e, 8)));
         assert_eq!(gesture_shortcut(PinchZoom(0.85)), Some((0x2d, 8)));
+        assert_eq!(gesture_shortcut(ThreeFingerTap), Some((0x07, 0x09)));
+        assert_eq!(gesture_shortcut(Swipe4Up), Some((0x52, 1)));
+        assert_eq!(gesture_shortcut(Swipe4Down), Some((0x51, 1)));
+        assert_eq!(gesture_shortcut(Swipe4Left), Some((0x50, 1)));
+        assert_eq!(gesture_shortcut(Swipe4Right), Some((0x4f, 1)));
+        assert_eq!(gesture_shortcut(FiveFingerSpread), Some((0x44, 0)));
+        assert_eq!(gesture_shortcut(FiveFingerPinchIn), None);
         assert_eq!(gesture_shortcut(Tap), None);
+    }
+}
+
+#[cfg(test)]
+mod extended_gesture_dispatch_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    struct Sink { keys: Arc<Mutex<Vec<(u16, bool, u8)>>>, apps: Arc<Mutex<Vec<String>>> }
+    impl InputSink for Sink {
+        fn pointer(&self, _: f32, _: f32, _: wingpane_proto::TouchPhase) {}
+        fn release_all(&self) {}
+        fn key(&self, usage: u16, down: bool, mods: u8) { self.keys.lock().unwrap().push((usage, down, mods)); }
+        fn launch_app(&self, name: &str) { self.apps.lock().unwrap().push(name.to_owned()); }
+    }
+    #[test]
+    fn every_extended_gesture_dispatches_the_expected_action() {
+        use wingpane_proto::{GestureKind::*, InputEvent, InputPacket, Mode};
+        let keys = Arc::new(Mutex::new(Vec::new()));
+        let apps = Arc::new(Mutex::new(Vec::new()));
+        let mut sink = Sink { keys: keys.clone(), apps: apps.clone() };
+        let router = InputRouter::new(Mode::TrackpadKeyboard, &mut sink);
+        let gestures = [
+            (ThreeFingerTap, Some((0x07, 0x09))), (Swipe4Up, Some((0x52, 1))),
+            (Swipe4Down, Some((0x51, 1))), (Swipe4Left, Some((0x50, 1))),
+            (Swipe4Right, Some((0x4f, 1))), (FiveFingerSpread, Some((0x44, 0))),
+            (FiveFingerPinchIn, None),
+        ];
+        for (seq, (gesture, shortcut)) in gestures.into_iter().enumerate() {
+            assert!(router.handle_input(InputPacket { seq: seq as u32, ts_us: 0, event: InputEvent::Gesture(gesture) }));
+            if let Some((hid, mods)) = shortcut {
+                assert_eq!(*keys.lock().unwrap(), vec![(hid, true, mods), (hid, false, 0)]);
+                keys.lock().unwrap().clear();
+            }
+        }
+        assert_eq!(*apps.lock().unwrap(), vec!["Apps"]);
     }
 }
 
@@ -905,9 +956,9 @@ pub enum DisplayTransition {
     Create,
 }
 
-/// Display + Trackpad keep the virtual display (Trackpad shows it above the pad); only Pen removes it.
+/// Only Display mode keeps the virtual display.
 pub fn mode_has_display(mode: Mode) -> bool {
-    !matches!(mode, Mode::GraphicsTablet | Mode::AndroidControl)
+    mode == Mode::ExtendedDisplay
 }
 
 pub fn display_transition(prev: Mode, next: Mode, suspend_supported: bool) -> DisplayTransition {
@@ -932,21 +983,22 @@ mod display_transition_tests {
     #[test]
     fn transition_requires_negotiated_suspend_and_crossing_display_boundary() {
         assert!(!mode_has_display(Mode::AndroidControl));
+        assert!(!mode_has_display(Mode::TrackpadKeyboard));
+        assert!(!mode_has_display(Mode::GraphicsTablet));
+        assert!(mode_has_display(Mode::ExtendedDisplay));
         assert_eq!(
             display_transition(Mode::ExtendedDisplay, Mode::GraphicsTablet, true),
             DisplayTransition::Remove
         );
         assert_eq!(
             display_transition(Mode::GraphicsTablet, Mode::TrackpadKeyboard, true),
-            DisplayTransition::Create
-        );
-        assert_eq!(display_transition(Mode::TrackpadKeyboard, Mode::AndroidControl, true), DisplayTransition::Remove);
-        assert_eq!(display_transition(Mode::GraphicsTablet, Mode::AndroidControl, true), DisplayTransition::None);
-        assert_eq!(display_transition(Mode::AndroidControl, Mode::ExtendedDisplay, true), DisplayTransition::Create);
-        assert_eq!(
-            display_transition(Mode::ExtendedDisplay, Mode::TrackpadKeyboard, true),
             DisplayTransition::None
         );
+        assert_eq!(display_transition(Mode::TrackpadKeyboard, Mode::AndroidControl, true), DisplayTransition::None);
+        assert_eq!(display_transition(Mode::GraphicsTablet, Mode::AndroidControl, true), DisplayTransition::None);
+        assert_eq!(display_transition(Mode::AndroidControl, Mode::ExtendedDisplay, true), DisplayTransition::Create);
+        assert_eq!(display_transition(Mode::ExtendedDisplay, Mode::TrackpadKeyboard, true), DisplayTransition::Remove);
+        assert_eq!(display_transition(Mode::TrackpadKeyboard, Mode::ExtendedDisplay, true), DisplayTransition::Create);
         assert_eq!(
             display_transition(Mode::ExtendedDisplay, Mode::GraphicsTablet, false),
             DisplayTransition::None
@@ -965,6 +1017,6 @@ mod video_suspend_tests {
         assert!(should_send_video(Mode::ExtendedDisplay, true, true));
         assert!(!should_send_video(Mode::GraphicsTablet, false, true));
         assert!(!should_send_video(Mode::AndroidControl, false, true));
-        assert!(should_send_video(Mode::TrackpadKeyboard, false, true));
+        assert!(!should_send_video(Mode::TrackpadKeyboard, false, true));
     }
 }

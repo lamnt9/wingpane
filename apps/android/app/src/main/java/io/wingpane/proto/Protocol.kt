@@ -33,7 +33,20 @@ sealed interface GestureKind {
     data object Swipe3Left : GestureKind
     data object Swipe3Right : GestureKind
     data class PinchZoom(val scale: Float) : GestureKind
+    data object ThreeFingerTap : GestureKind
+    data object Swipe4Up : GestureKind
+    data object Swipe4Down : GestureKind
+    data object Swipe4Left : GestureKind
+    data object Swipe4Right : GestureKind
+    data object FiveFingerPinchIn : GestureKind
+    data object FiveFingerSpread : GestureKind
 }
+const val FEATURE_EXTENDED_GESTURES: Int = 1 shl 10
+fun supportsGesture(kind: GestureKind, hostFeatures: Int, capabilitiesReceived: Boolean): Boolean =
+    kind !in setOf(GestureKind.ThreeFingerTap, GestureKind.Swipe4Up, GestureKind.Swipe4Down,
+        GestureKind.Swipe4Left, GestureKind.Swipe4Right, GestureKind.FiveFingerPinchIn,
+        GestureKind.FiveFingerSpread) ||
+        (capabilitiesReceived && (hostFeatures and FEATURE_EXTENDED_GESTURES) != 0)
 sealed interface InputEvent {
     data class Pen(val x: Float, val y: Float, val pressure: Float, val tiltX: Byte, val tiltY: Byte, val isDown: Boolean, val isHover: Boolean, val buttonMask: UByte, val timestampUs: ULong) : InputEvent
     data class Touch(val pointerId: UByte, val x: Float, val y: Float, val phase: TouchPhase) : InputEvent
@@ -143,7 +156,7 @@ private object Codec {
         is InputEvent.Text->{val bytes=e.text.toByteArray(Charsets.UTF_8);if(bytes.size>256)throw FrameException("text exceeds 256 UTF-8 bytes");w.varint(7u);w.string(e.text)}
         is InputEvent.PreciseScroll->{w.varint(8u);w.float(e.dx);w.float(e.dy);w.varint(e.phase.ordinal.toULong())}
     }}
-    private fun gesture(w:Writer,g:GestureKind){val i=when(g){GestureKind.Tap->0;GestureKind.TwoFingerTap->1;GestureKind.DoubleTapDrag->2;GestureKind.Swipe3Up->3;GestureKind.Swipe3Down->4;GestureKind.Swipe3Left->5;GestureKind.Swipe3Right->6;is GestureKind.PinchZoom->7};w.varint(i.toULong());if(g is GestureKind.PinchZoom)w.float(g.scale)}
+    private fun gesture(w:Writer,g:GestureKind){val i=when(g){GestureKind.Tap->0;GestureKind.TwoFingerTap->1;GestureKind.DoubleTapDrag->2;GestureKind.Swipe3Up->3;GestureKind.Swipe3Down->4;GestureKind.Swipe3Left->5;GestureKind.Swipe3Right->6;is GestureKind.PinchZoom->7;GestureKind.ThreeFingerTap->8;GestureKind.Swipe4Up->9;GestureKind.Swipe4Down->10;GestureKind.Swipe4Left->11;GestureKind.Swipe4Right->12;GestureKind.FiveFingerPinchIn->13;GestureKind.FiveFingerSpread->14};w.varint(i.toULong());if(g is GestureKind.PinchZoom)w.float(g.scale)}
     fun decode(b:ByteArray):Packet {
         val r=Reader(b); val packet=when(r.enum(0,2)){
             0->Packet.Control(decodeControl(r));1->Packet.Video(VideoPacket(r.varint().toUInt(),r.varint(),r.bool(),r.bytes(r.count())))
@@ -171,7 +184,7 @@ private object Codec {
         0->InputEvent.Pen(r.float(),r.float(),r.float(),r.byte().toByte(),r.byte().toByte(),r.bool(),r.bool(),r.byte().toUByte(),r.varint())
         1->InputEvent.Touch(r.byte().toUByte(),r.float(),r.float(),TouchPhase.entries[r.enum(0,3)])
         2->InputEvent.PointerDelta(r.float(),r.float());3->InputEvent.Scroll(r.float(),r.float())
-        4->{val tag=r.enum(0,7);InputEvent.Gesture(if(tag==7)GestureKind.PinchZoom(r.float()) else listOf(GestureKind.Tap,GestureKind.TwoFingerTap,GestureKind.DoubleTapDrag,GestureKind.Swipe3Up,GestureKind.Swipe3Down,GestureKind.Swipe3Left,GestureKind.Swipe3Right)[tag])}
+        4->{val tag=r.enum(0,14);InputEvent.Gesture(when(tag){0->GestureKind.Tap;1->GestureKind.TwoFingerTap;2->GestureKind.DoubleTapDrag;3->GestureKind.Swipe3Up;4->GestureKind.Swipe3Down;5->GestureKind.Swipe3Left;6->GestureKind.Swipe3Right;7->GestureKind.PinchZoom(r.float());8->GestureKind.ThreeFingerTap;9->GestureKind.Swipe4Up;10->GestureKind.Swipe4Down;11->GestureKind.Swipe4Left;12->GestureKind.Swipe4Right;13->GestureKind.FiveFingerPinchIn;else->GestureKind.FiveFingerSpread})}
         5->InputEvent.Keyboard(r.varint().toUShort(),r.bool(),r.byte().toUByte())
         6->InputEvent.MouseButton(r.byte().toUByte(),r.bool())
         7->r.string().let{if(it.toByteArray(Charsets.UTF_8).size>256)throw FrameException("text exceeds 256 UTF-8 bytes");InputEvent.Text(it)}

@@ -43,11 +43,21 @@ pub enum InputEvent {
     /// Committed UTF-8 text; appended as input tag 7 (maximum 256 UTF-8 bytes).
     Text(alloc::string::String),
     /// Host-side precise scroll with trackpad phase; appended as input tag 8.
-    PreciseScroll { dx: f32, dy: f32, phase: ScrollPhase },
+    PreciseScroll {
+        dx: f32,
+        dy: f32,
+        phase: ScrollPhase,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScrollPhase { Discrete, Began, Changed, Ended, Momentum }
+pub enum ScrollPhase {
+    Discrete,
+    Began,
+    Changed,
+    Ended,
+    Momentum,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchPhase {
@@ -67,6 +77,14 @@ pub enum GestureKind {
     Swipe3Left,
     Swipe3Right,
     PinchZoom(f32),
+    // Append-only protocol tags 8..14.
+    ThreeFingerTap,
+    Swipe4Up,
+    Swipe4Down,
+    Swipe4Left,
+    Swipe4Right,
+    FiveFingerPinchIn,
+    FiveFingerSpread,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
