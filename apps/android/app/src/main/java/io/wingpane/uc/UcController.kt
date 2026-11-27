@@ -94,6 +94,7 @@ class UcController(private val service: WingpaneAccessibilityService, private va
                 }
             }
             is ControlMessage.UcExit -> transition(UcClientEvent.Exit)
+            is ControlMessage.Clipboard -> ClipboardBridge.setFromHost(service, message.text)
             is ControlMessage.SetMode -> if (message.mode != Mode.AndroidControl) transition(UcClientEvent.Exit)
             else -> Unit
         }

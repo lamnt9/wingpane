@@ -31,7 +31,7 @@ sealed interface ClientState {
 
 internal fun clientFeatures(universalControlEnabled: Boolean): UInt =
     (1u shl 1) or (1u shl 2) or (1u shl 3) or (1u shl 7) or
-        (if (universalControlEnabled) 1u shl 8 else 0u)
+        (if (universalControlEnabled) (1u shl 8) or (1u shl 9) else 0u)
 
 /** One switch for advertising and accepting Universal Control protocol traffic. */
 object UcFeatureFlags { const val enabled = true }
@@ -338,6 +338,9 @@ class WingpaneClient(
                                     is ControlMessage.UcExit, is ControlMessage.SetMode -> {
                                         if (supportsUniversalControl()) mutableUcControl.emit(message)
                                     }
+                                    is ControlMessage.Clipboard -> {
+                                        if (supportsClipboardText()) mutableUcControl.emit(message)
+                                    }
                                     is ControlMessage.Reject -> {
                                         reduce(ConnectionStateMachine.Event.RejectReceived(message.reason, message.hostVersion?.toInt()))
                                         break@activeRead
@@ -385,6 +388,8 @@ class WingpaneClient(
     }
 
     suspend fun sendControl(message: ControlMessage) = withContext(ioDispatcher) {
+        if (message is ControlMessage.Clipboard &&
+            (!supportsClipboardText() || message.text.toByteArray(Charsets.UTF_8).size > 64 * 1024)) return@withContext
         if ((message is ControlMessage.SetMode && message.mode == Mode.AndroidControl ||
                 message is ControlMessage.UcExit || message is ControlMessage.UcStatus) && !supportsUniversalControl()) return@withContext
         socket?.let { send(it, Packet.Control(message)) }
@@ -392,6 +397,9 @@ class WingpaneClient(
 
     fun supportsUniversalControl(): Boolean = universalControlEnabled &&
         mutableHostCapabilitiesReceived.value && (mutableHostFeatures.value and FEATURE_UNIVERSAL_CONTROL) != 0
+
+    fun supportsClipboardText(): Boolean = supportsUniversalControl() &&
+        (mutableHostFeatures.value and io.wingpane.proto.FEATURE_CLIPBOARD_TEXT) != 0
 
     fun cancel() {
         stopped.set(true)

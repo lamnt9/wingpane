@@ -97,7 +97,7 @@ impl wingpaned::CaptureSource for Capture {
 // WP-U4 C ABI. Native event tags/reason codes are NOT protocol enum tags.
 use std::{ffi::c_void, sync::Mutex};
 use tokio::sync::mpsc;
-use wingpaned::uc::{BridgeEvent, Rect};
+use wingpaned::uc::{BridgeEvent, ClipboardPort, Rect};
 use wingpane_proto::{InputEvent, ScrollPhase, UcEdge};
 
 pub use wingpaned::uc::WpUcEvent;
@@ -110,6 +110,9 @@ unsafe extern "C" {
     fn wp_uc_stop();
     fn wp_uc_display_rects(out: *mut f64, max: u32) -> u32;
     fn wp_uc_ime_hint() -> u8;
+    fn wp_uc_pasteboard_change_count() -> i64;
+    fn wp_uc_pasteboard_get(buf: *mut u8, len: usize) -> isize;
+    fn wp_uc_pasteboard_set(ptr: *const u8, len: usize) -> bool;
     fn CGPreflightListenEventAccess() -> bool;
     fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
 }
@@ -119,6 +122,21 @@ unsafe extern "C" { fn IsSecureEventInputEnabled() -> bool; }
 /// Restores ownership even on early setup failure, cancellation, or unwinding.
 pub struct UcReleaseGuard;
 impl Drop for UcReleaseGuard { fn drop(&mut self) { UcBridge::release(); } }
+
+pub struct NativeClipboard;
+impl ClipboardPort for NativeClipboard {
+    fn change_count(&self) -> i64 { unsafe { wp_uc_pasteboard_change_count() } }
+    fn get_text(&self) -> Option<String> {
+        let needed = unsafe { wp_uc_pasteboard_get(std::ptr::null_mut(), 0) };
+        if !(0..=64 * 1024).contains(&needed) { return None; }
+        let mut bytes = vec![0; needed as usize];
+        if unsafe { wp_uc_pasteboard_get(bytes.as_mut_ptr(), bytes.len()) } != needed { return None; }
+        String::from_utf8(bytes).ok()
+    }
+    fn set_text(&mut self, text: &str) -> bool {
+        text.len() <= 64 * 1024 && unsafe { wp_uc_pasteboard_set(text.as_ptr(), text.len()) }
+    }
+}
 
 struct UcCallbackContext { tx: mpsc::UnboundedSender<(WpUcEvent, u64)> }
 /// Stable callback allocation. wp_uc_stop clears the callback under the Swift

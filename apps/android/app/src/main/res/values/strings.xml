@@ -4,6 +4,7 @@
     <string name="uc_notification_text">Mac is controlling your tablet</string>
     <string name="uc_action_display">Back to Display</string>
     <string name="uc_action_return_mouse">Return mouse to Mac</string>
+    <string name="uc_action_send_clipboard">Send clipboard to Mac</string>
     <string name="uc_accessibility_service_name">Wingpane universal control</string>
     <string name="uc_accessibility_service_description">Lets a connected computer control taps and gestures on this tablet. Some banking apps may block use while an Accessibility service is enabled.</string>
     <string name="hud_mode_android">Android</string>

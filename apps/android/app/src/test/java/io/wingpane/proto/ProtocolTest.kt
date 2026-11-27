@@ -24,6 +24,7 @@ class ProtocolTest {
             "control_uc_enter" to ControlMessage.UcEnter(UcEdge.Right,.375f,2u.toUByte()),
             "control_uc_exit" to ControlMessage.UcExit(.625f,UcExitReason.Hotkey),
             "control_uc_status" to ControlMessage.UcStatus(0x13u),
+            "control_clipboard" to ControlMessage.Clipboard("Tiếng Việt 😀"),
             "reject_version_mismatch" to ControlMessage.Reject(RejectReason.VersionMismatch,1u),
             "reject_unsupported_codec" to ControlMessage.Reject(RejectReason.UnsupportedCodec),
             "reject_invalid_hello" to ControlMessage.Reject(RejectReason.InvalidHello),
@@ -67,7 +68,7 @@ class ProtocolTest {
         assertEquals(Packet.Control(ControlMessage.Ping(0x1_0000_0000uL)),both.next())
     }
     @Test fun unknownControlTagIsSkippedAndNextFrameDecodes() {
-        val unknown = byteArrayOf(2,0,0,0,0,99)
+        val unknown = byteArrayOf(2,0,0,0,0,16)
         val ping = Packet.Control(ControlMessage.Ping(42uL)).encodeFrame()
         val decoder = FrameDecoder(); decoder.push(unknown + ping)
         assertEquals(Packet.Control(ControlMessage.Ping(42uL)), decoder.next())
@@ -93,6 +94,29 @@ class ProtocolTest {
             Packet.Input(InputPacket(0u, 0uL, InputEvent.Text("é".repeat(129)))).encodeFrame()
             fail("expected FrameException")
         } catch (_: FrameException) {}
+    }
+    @Test fun clipboardRoundtripAndOversizeDrop() {
+        val packet = Packet.Control(ControlMessage.Clipboard("Tiếng Việt 😀"))
+        val decoder = FrameDecoder()
+        decoder.push(packet.encodeFrame())
+        assertEquals(packet, decoder.next())
+        val atLimit = Packet.Control(ControlMessage.Clipboard("é".repeat(32_768)))
+        val limitDecoder = FrameDecoder()
+        limitDecoder.push(atLimit.encodeFrame())
+        assertEquals(atLimit, limitDecoder.next())
+        val tooLarge = Packet.Control(ControlMessage.Clipboard("é".repeat(32_769)))
+        try { tooLarge.encodeFrame(); fail("expected FrameException") } catch (_: FrameException) { }
+        // A complete oversized UTF-8 string must be rejected by the receiver too.
+        val encoded = java.io.ByteArrayOutputStream().apply {
+            write(byteArrayOf(0, 15, 0x82.toByte(), 0x80.toByte(), 4))
+            write("é".repeat(32_769).toByteArray(Charsets.UTF_8))
+        }.toByteArray()
+        val frame = java.nio.ByteBuffer.allocate(encoded.size + 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .putInt(encoded.size).put(encoded).array()
+        val oversizedDecoder = FrameDecoder()
+        oversizedDecoder.push(frame + packet.encodeFrame())
+        assertEquals(packet, oversizedDecoder.next())
+        assertEquals(1L, oversizedDecoder.skippedFrames)
     }
     @Test fun rejectsEmptyAndOversizedBeforeBodyAllocation() {
         listOf(byteArrayOf(0,0,0,0),byteArrayOf(1,0,0x80.toByte(),0)).forEach { b ->

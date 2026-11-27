@@ -65,6 +65,7 @@ pub enum ControlMessage {
     UcEnter { edge: UcEdge, along: f32, ime_hint: u8 },
     UcExit { along: f32, reason: UcExitReason },
     UcStatus { flags: u32 },
+    Clipboard { text: String },
 }
 
 /// Why the host declined a connection. Variant order is part of the wire format.

@@ -11,6 +11,7 @@ pub use frame::{encode_frame, FrameDecoder, FrameError, Packet, VideoPacket, MAX
 pub use input::{GestureKind, InputEvent, InputPacket, ScrollPhase, TouchPhase};
 
 pub const FEATURE_UNIVERSAL_CONTROL: u32 = 1 << 8;
+pub const FEATURE_CLIPBOARD_TEXT: u32 = 1 << 9;
 pub const UC_STATUS_SERVICE_CONNECTED: u32 = 1 << 0;
 pub const UC_STATUS_GESTURES_OK: u32 = 1 << 1;
 pub const UC_STATUS_IME_CONNECTION: u32 = 1 << 2;
@@ -65,6 +66,7 @@ mod tests {
             ControlMessage::UcEnter { edge: UcEdge::Right, along: 0.375, ime_hint: 2 },
             ControlMessage::UcExit { along: 0.625, reason: UcExitReason::Hotkey },
             ControlMessage::UcStatus { flags: 0x13 },
+            ControlMessage::Clipboard { text: String::from("Tiếng Việt 😀") },
         ];
         for c in controls {
             roundtrip(Packet::Control(c));
@@ -206,6 +208,31 @@ mod tests {
             Err(FrameError::Encode)
         );
     }
+    #[test]
+    fn clipboard_rejects_over_64_kib_utf8_without_writing_partial_frame() {
+        let allowed = Packet::Control(ControlMessage::Clipboard { text: String::from("é".repeat(32_768)) });
+        let mut frame = Vec::new();
+        encode_frame(&allowed, &mut frame).unwrap();
+        let mut decoder = FrameDecoder::new();
+        decoder.push(&frame);
+        assert_eq!(decoder.next_packet().unwrap(), Some(allowed));
+        let oversized = Packet::Control(ControlMessage::Clipboard { text: String::from("é".repeat(32_769)) });
+        let before = frame.clone();
+        assert_eq!(encode_frame(&oversized, &mut frame), Err(FrameError::Encode));
+        assert_eq!(frame, before);
+        let body = postcard::to_allocvec(&oversized).unwrap();
+        let mut wire = (body.len() as u32).to_le_bytes().to_vec();
+        wire.extend_from_slice(&body);
+        let mut decoder = FrameDecoder::new();
+        decoder.push(&wire);
+        assert_eq!(decoder.next_packet(), Ok(None));
+        let mut ping = Vec::new();
+        encode_frame(&Packet::Control(ControlMessage::Ping(7)), &mut ping).unwrap();
+        let mut decoder = FrameDecoder::new();
+        decoder.push(&wire);
+        decoder.push(&ping);
+        assert_eq!(decoder.next_packet(), Ok(Some(Packet::Control(ControlMessage::Ping(7)))));
+    }
 }
 
 /// Canonical packet set used by the checked-in Kotlin interoperability vectors.
@@ -268,6 +295,7 @@ pub fn golden_packets() -> alloc::vec::Vec<(&'static str, Packet)> {
         ("control_uc_enter", ControlMessage::UcEnter { edge: UcEdge::Right, along: 0.375, ime_hint: 2 }),
         ("control_uc_exit", ControlMessage::UcExit { along: 0.625, reason: UcExitReason::Hotkey }),
         ("control_uc_status", ControlMessage::UcStatus { flags: 0x13 }),
+        ("control_clipboard", ControlMessage::Clipboard { text: String::from("Tiếng Việt 😀") }),
     ]);
     controls.push((
         "control_capabilities",
