@@ -1,6 +1,8 @@
 package io.wingpane.input
 
+import io.wingpane.proto.GestureKind
 import io.wingpane.proto.InputEvent
+import kotlin.math.abs
 import kotlin.math.hypot
 
 /** Pure pointer state machine. Coordinates and scroll deltas are pixels; callers supply monotonic ms. */
@@ -20,6 +22,9 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
     private var inertiaUntil = 0L
     private var gestureBaseDistance = 0f
     private var gestureSent = false
+    private var buttonHeld = false
+    private var touchStartedButtonHeld = false
+    private var fingerStart = emptyMap<Int, Pair<Float, Float>>()
 
     private fun centroidX(p: List<PointerSample>) = p.map { it.x }.average().toFloat()
     private fun centroidY(p: List<PointerSample>) = p.map { it.y }.average().toFloat()
@@ -30,77 +35,104 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
             Action.Down -> if (pointers.isNotEmpty()) {
                 startAt=nowMs; lastAt=nowMs; count=pointers.size; startCount=pointers.size
                 startX=centroidX(pointers); startY=centroidY(pointers); lastX=startX; lastY=startY
-                moved=false; dragging=false; inertiaUntil=0
-                // Tap, then touch again within DOUBLE_TAP_MS: hold the button so moving drags ("tap-and-a-half").
-                if (pointers.size == 1 && lastTapUpAt >= 0 && nowMs - lastTapUpAt <= DOUBLE_TAP_MS) {
-                    out += InputEvent.MouseButton(0u, true); dragging = true
+                fingerStart=pointers.associate { it.id to (it.x to it.y) }
+                moved=false; dragging=false; inertiaUntil=0; touchStartedButtonHeld=buttonHeld
+                if (pointers.size == 1 && !buttonHeld && lastTapUpAt >= 0 && nowMs-lastTapUpAt <= DOUBLE_TAP_MS) {
+                    out += InputEvent.MouseButton(0u,true); dragging=true
                 }
-                lastTapUpAt = -1L
-                gestureBaseDistance=distance(pointers); gestureSent=false
+                lastTapUpAt=-1L
+                gestureBaseDistance=if (pointers.size >= 5) spread(pointers) else pairDistance(pointers); gestureSent=false
             }
             Action.Move -> if (pointers.isNotEmpty()) {
                 val cx=centroidX(pointers); val cy=centroidY(pointers)
                 if (pointers.size != count) {
-                    // A finger landed or lifted: the centroid jumps, which is not finger motion.
                     count=pointers.size; startCount=maxOf(startCount,count)
-                    if (count == 3) { startX=cx; startY=cy; gestureSent=false }
-                    if (count == 2) { gestureBaseDistance=distance(pointers); gestureSent=false }
                     startX=cx; startY=cy; lastX=cx; lastY=cy; lastAt=nowMs
+                    fingerStart=pointers.associate { it.id to (it.x to it.y) }
+                    // Gesture baselines are captured at the transition to their active finger count.
+                    if (count == 2) gestureBaseDistance=pairDistance(pointers)
+                    if (count == 5) gestureBaseDistance=spread(pointers)
                     return out
                 }
                 val dx=cx-lastX; val dy=cy-lastY
                 val dt=(nowMs-lastAt).coerceAtLeast(1); val dist=hypot(cx-startX,cy-startY)
                 if (dist > tapSlopPx) moved=true
+                // Per-finger slop only for 3+ finger taps; a 2-finger pinch must not count as scroll motion.
+                if (startCount >= 3 && pointers.any { sample -> fingerStart[sample.id]?.let { hypot(sample.x-it.first,sample.y-it.second) > tapSlopPx } == true }) moved=true
                 when {
-                    pointers.size == 3 -> {
-                        val ddx=cx-startX; val ddy=cy-startY
-                        if (!gestureSent && maxOf(kotlin.math.abs(ddx),kotlin.math.abs(ddy)) >= threeFingerSwipePx) {
-                            val kind = if (kotlin.math.abs(ddy) > kotlin.math.abs(ddx)) if (ddy < 0) io.wingpane.proto.GestureKind.Swipe3Up else io.wingpane.proto.GestureKind.Swipe3Down else if (ddx < 0) io.wingpane.proto.GestureKind.Swipe3Left else io.wingpane.proto.GestureKind.Swipe3Right
-                            out += InputEvent.Gesture(kind); gestureSent=true
+                    startCount >= 4 -> {
+                        if (startCount == 4 && pointers.size == 4 && !gestureSent) {
+                            val ddx=cx-startX; val ddy=cy-startY
+                            if (maxOf(abs(ddx),abs(ddy)) >= threeFingerSwipePx) {
+                                val kind=swipeKind(ddx,ddy,4)
+                                out += InputEvent.Gesture(kind); gestureSent=true
+                            }
+                        } else if (startCount == 5 && pointers.size == 5 && !gestureSent && gestureBaseDistance > 0f) {
+                            val ratio=spread(pointers)/gestureBaseDistance
+                            if (ratio <= 0.75f) { out += InputEvent.Gesture(GestureKind.FiveFingerPinchIn); gestureSent=true }
+                            else if (ratio >= 1.25f) { out += InputEvent.Gesture(GestureKind.FiveFingerSpread); gestureSent=true }
                         }
                     }
-                    pointers.size == 2 -> {
-                        val d=distance(pointers)
-                        if (gestureBaseDistance > 0 && !gestureSent && kotlin.math.abs(d / gestureBaseDistance - 1f) >= PINCH_STEP) {
-                            out += InputEvent.Gesture(io.wingpane.proto.GestureKind.PinchZoom(if (d > gestureBaseDistance) 1.15f else 0.85f)); gestureBaseDistance=d; gestureSent=false
-                        } else if (!moved) { /* wait for pinch threshold before scrolling */ }
-                        else { out += InputEvent.Scroll(-dx,-dy); scrollVelocityX=-dx*1000f/dt; scrollVelocityY=-dy*1000f/dt }
+                    pointers.size == 3 -> {
+                        val ddx=cx-startX; val ddy=cy-startY
+                        if (!gestureSent && maxOf(abs(ddx),abs(ddy)) >= threeFingerSwipePx) {
+                            out += InputEvent.Gesture(swipeKind(ddx,ddy,3)); gestureSent=true
+                        }
                     }
-                    pointers.size >= 2 -> if (moved) {
-                        out += InputEvent.Scroll(-dx,-dy)
-                        scrollVelocityX = -dx*1000f/dt; scrollVelocityY = -dy*1000f/dt
+                    startCount >= 3 -> Unit
+                    pointers.size == 2 -> {
+                        val d=pairDistance(pointers)
+                        if (gestureBaseDistance > 0 && !gestureSent && abs(d/gestureBaseDistance-1f) >= PINCH_STEP) {
+                            out += InputEvent.Gesture(GestureKind.PinchZoom(if (d > gestureBaseDistance) 1.15f else 0.85f)); gestureBaseDistance=d; gestureSent=false
+                        } else if (moved) { out += InputEvent.Scroll(-dx,-dy); scrollVelocityX=-dx*1000f/dt; scrollVelocityY=-dy*1000f/dt }
                     }
                     dragging -> out += InputEvent.PointerDelta(dx,dy)
-                    !moved && nowMs-startAt >= TAP_MS -> { out += InputEvent.MouseButton(0u,true); dragging=true }
-                    else -> {
-                        val speed=hypot(dx,dy)*1000f/dt
-                        val gain=(1f+gainK*speed/1000f).coerceIn(1f,4f)
-                        if (moved) out += InputEvent.PointerDelta(dx*gain,dy*gain)
-                    }
+                    !touchStartedButtonHeld && !buttonHeld && !moved && nowMs-startAt >= TAP_MS -> { out += InputEvent.MouseButton(0u,true); dragging=true }
+                    else -> if (moved) out += pointerDelta(dx,dy,dt)
                 }
                 lastX=cx;lastY=cy;lastAt=nowMs
             }
             Action.Up -> {
-                if (dragging) out += InputEvent.MouseButton(0u,false)
-                else if (!moved && nowMs-startAt <= TAP_MS && startCount < 3) {
+                if (dragging) { if (!touchStartedButtonHeld) out += InputEvent.MouseButton(0u,false) }
+                else if (startCount == 3 && !moved && nowMs-startAt <= TAP_MS) {
+                    out += InputEvent.Gesture(GestureKind.ThreeFingerTap); gestureSent=true
+                } else if (startCount < 3 && !touchStartedButtonHeld && !buttonHeld && !moved && nowMs-startAt <= TAP_MS) {
                     if (startCount == 2) { out += InputEvent.MouseButton(1u,true); out += InputEvent.MouseButton(1u,false) }
-                    else { out += InputEvent.Gesture(io.wingpane.proto.GestureKind.Tap); lastTapUpAt = nowMs }
+                    else { out += InputEvent.Gesture(GestureKind.Tap); lastTapUpAt=nowMs }
                 }
                 if (startCount == 2 && moved) inertiaUntil=nowMs+INERTIA_MS
-                dragging=false; count=0
+                dragging=false; count=0; startCount=0; touchStartedButtonHeld=false; fingerStart=emptyMap()
             }
-            Action.Cancel -> { if (dragging) out += InputEvent.MouseButton(0u,false); dragging=false; inertiaUntil=0; count=0 }
+            Action.Cancel -> { if (dragging && !touchStartedButtonHeld) out += InputEvent.MouseButton(0u,false); dragging=false; inertiaUntil=0; count=0; startCount=0; touchStartedButtonHeld=false; fingerStart=emptyMap() }
         }
         return out
     }
+    private fun pointerDelta(dx: Float, dy: Float, dt: Long): InputEvent.PointerDelta {
+        val speed=hypot(dx,dy)*1000f/dt
+        val gain=(1f+gainK*speed/1000f).coerceIn(1f,4f)
+        return InputEvent.PointerDelta(dx*gain,dy*gain)
+    }
+    private fun swipeKind(dx: Float, dy: Float, fingers: Int): GestureKind =
+        if (abs(dy)>abs(dx)) {
+            if (dy<0) if (fingers==3) GestureKind.Swipe3Up else GestureKind.Swipe4Up
+            else if (fingers==3) GestureKind.Swipe3Down else GestureKind.Swipe4Down
+        } else {
+            if (dx<0) if (fingers==3) GestureKind.Swipe3Left else GestureKind.Swipe4Left
+            else if (fingers==3) GestureKind.Swipe3Right else GestureKind.Swipe4Right
+        }
     fun tick(nowMs: Long): List<InputEvent> {
+        if (startCount >= 3) { inertiaUntil=0; return emptyList() }
         if (inertiaUntil == 0L || nowMs >= inertiaUntil) { inertiaUntil=0; return emptyList() }
         val remaining=(inertiaUntil-nowMs).toFloat()/325f
         val decay=remaining*0.12f
         return listOf(InputEvent.Scroll(scrollVelocityX*decay,scrollVelocityY*decay))
     }
-    private fun distance(p: List<PointerSample>): Float = if (p.size < 2) 0f else hypot(p[0].x-p[1].x,p[0].y-p[1].y)
+    private fun pairDistance(p: List<PointerSample>) = if (p.size < 2) 0f else hypot(p[0].x-p[1].x,p[0].y-p[1].y)
+    private fun spread(p: List<PointerSample>): Float {
+        if (p.isEmpty()) return 0f
+        val cx=centroidX(p); val cy=centroidY(p)
+        return p.map { hypot(it.x-cx,it.y-cy) }.average().toFloat()
+    }
     companion object { const val TAP_MS=180L; const val DOUBLE_TAP_MS=300L; const val TAP_SLOP_DP=8f; const val INERTIA_MS=325L; const val PINCH_STEP=0.15f }
-    private var buttonHeld = false
-    fun setButtonHeld(held: Boolean) { buttonHeld = held }
+    fun setButtonHeld(held: Boolean) { buttonHeld=held }
 }
