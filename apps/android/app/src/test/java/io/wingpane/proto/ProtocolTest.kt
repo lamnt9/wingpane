@@ -6,6 +6,27 @@ import kotlin.random.Random
 import io.wingpane.ui.hud.PressureCurvePresets
 
 class ProtocolTest {
+    @Test fun extendedGestureTags8Through14Roundtrip() {
+        val kinds = listOf(
+            GestureKind.ThreeFingerTap, GestureKind.Swipe4Up, GestureKind.Swipe4Down,
+            GestureKind.Swipe4Left, GestureKind.Swipe4Right, GestureKind.FiveFingerPinchIn,
+            GestureKind.FiveFingerSpread,
+        )
+        kinds.forEachIndexed { index, kind ->
+            val packet = Packet.Input(InputPacket(index.toUInt(), 42uL, InputEvent.Gesture(kind)))
+            val decoder = FrameDecoder().also { it.push(packet.encodeFrame()) }
+            assertEquals(packet, decoder.next())
+            assertNull(decoder.next())
+        }
+    }
+
+    @Test fun extendedGesturesRequireAdvertisedFeature() {
+        assertFalse(supportsGesture(GestureKind.Swipe4Up, 0, true))
+        assertFalse(supportsGesture(GestureKind.ThreeFingerTap, FEATURE_EXTENDED_GESTURES, false))
+        assertTrue(supportsGesture(GestureKind.FiveFingerSpread, FEATURE_EXTENDED_GESTURES, true))
+        assertTrue(supportsGesture(GestureKind.Tap, 0, false))
+    }
+
     private fun expected(): Map<String, Packet> {
         val c=listOf(VideoCodec.H264,VideoCodec.Hevc)
         val controls=mapOf(
