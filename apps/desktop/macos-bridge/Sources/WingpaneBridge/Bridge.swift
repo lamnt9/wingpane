@@ -2,31 +2,8 @@ import Foundation
 import Darwin
 import AppKit
 import ApplicationServices
-import Carbon
 import WingpaneCaptureKit
 import WingpaneDisplayKit
-
-@_cdecl("wp_uc_available") public func wp_uc_available() -> Bool { UcTap.shared.available() }
-@_cdecl("wp_uc_start") public func wp_uc_start(_ callback: WPUcCallback?, _ context: UnsafeMutableRawPointer?) -> Bool {
-    guard let callback else { return false }
-    return UcTap.shared.start(callback, context: context)
-}
-@_cdecl("wp_uc_set_inside") public func wp_uc_set_inside(_ inside: Bool, _ edge: UInt8, _ along: Double) {
-    UcTap.shared.setInside(inside, edge: edge, along: along)
-}
-@_cdecl("wp_uc_heartbeat") public func wp_uc_heartbeat() { UcTap.shared.heartbeat() }
-@_cdecl("wp_uc_release") public func wp_uc_release() { UcTap.shared.release() }
-@_cdecl("wp_uc_stop") public func wp_uc_stop() { UcTap.shared.stop() }
-
-/// 2 = Vietnamese input mode, 1 = a keyboard layout, 0 = unknown / leave Android unchanged.
-@_cdecl("wp_uc_ime_hint") public func wp_uc_ime_hint() -> UInt8 {
-    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return 0 }
-    if let mode = TISGetInputSourceProperty(source, kTISPropertyInputModeID) as? String,
-       mode.localizedCaseInsensitiveContains("vietnamese") { return 2 }
-    if let sourceType = TISGetInputSourceProperty(source, kTISPropertyInputSourceType) as? String,
-       sourceType == (kTISTypeKeyboardLayout as String) { return 1 }
-    return 0
-}
 
 public typealias WPFrameCallback = @convention(c) (
     UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, Int, Int32, Int64, Int64

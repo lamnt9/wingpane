@@ -10,13 +10,16 @@ pub enum Mode {
     ExtendedDisplay,
     GraphicsTablet,
     TrackpadKeyboard,
+    /// reserved: Universal Control removed 2026-11-28
     AndroidControl,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+/// reserved: Universal Control removed 2026-11-28
 pub enum UcEdge { Left, Right, Top, Bottom }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+/// reserved: Universal Control removed 2026-11-28
 pub enum UcExitReason { CursorReturned, Hotkey, ModeChanged, ClientNotReady, TapDisabled, Watchdog, SecureInput, MacLocked, SessionEnded }
 
 /// Destination used by the host when routing pen samples.
@@ -61,10 +64,15 @@ pub enum ControlMessage {
         pressure_curve: [f32; 4],
         target: PenTarget,
     },
+    /// reserved: Universal Control removed 2026-11-28
     UcConfig { edge: UcEdge },
+    /// reserved: Universal Control removed 2026-11-28
     UcEnter { edge: UcEdge, along: f32, ime_hint: u8 },
+    /// reserved: Universal Control removed 2026-11-28
     UcExit { along: f32, reason: UcExitReason },
+    /// reserved: Universal Control removed 2026-11-28
     UcStatus { flags: u32 },
+    /// reserved: Universal Control removed 2026-11-28
     Clipboard { text: String },
 }
 

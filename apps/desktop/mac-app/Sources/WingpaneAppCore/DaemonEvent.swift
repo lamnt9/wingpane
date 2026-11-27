@@ -57,13 +57,6 @@ public enum WaitingDeviceReason: Codable, Equatable, Sendable {
     }
 }
 
-public enum UcState: String, Codable, Equatable, Sendable {
-    case unavailable
-    case disabled
-    case armed
-    case inside
-}
-
 public enum DaemonEvent: Codable, Equatable, Sendable {
     case starting(version: String)
     case adbMissing
@@ -75,8 +68,7 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
     case stats(fps: Int, encodeP95Ms: Double, writeP95Ms: Double, backlogDropped: Int)
     case clientDisconnected(reason: String)
     case error(message: String)
-    case permissions(inputTrusted: Bool, screenRecording: Bool, inputMonitoring: Bool? = nil)
-    case uc(state: UcState, edge: UcEdge, clientReady: Bool, reason: String?, edgeBlocked: Bool)
+    case permissions(inputTrusted: Bool, screenRecording: Bool)
     case stopped
     case unknown(String)
 
@@ -100,11 +92,6 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
         case message
         case inputTrusted = "input_trusted"
         case screenRecording = "screen_recording"
-        case inputMonitoring = "input_monitoring"
-        case state
-        case edge
-        case clientReady = "client_ready"
-        case edgeBlocked = "edge_blocked"
     }
 
     public init(from decoder: Decoder) throws {
@@ -179,22 +166,7 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
         case "permissions":
             self = .permissions(
                 inputTrusted: try container.decode(Bool.self, forKey: .inputTrusted),
-                screenRecording: try container.decode(Bool.self, forKey: .screenRecording),
-                inputMonitoring: try container.decodeIfPresent(Bool.self, forKey: .inputMonitoring)
-            )
-
-        case "uc":
-            let state = try container.decode(UcState.self, forKey: .state)
-            let edge = try container.decode(UcEdge.self, forKey: .edge)
-            let clientReady = try container.decode(Bool.self, forKey: .clientReady)
-            let reason = try container.decodeIfPresent(String.self, forKey: .reason)
-            let edgeBlocked = try container.decodeIfPresent(Bool.self, forKey: .edgeBlocked) ?? false
-            self = .uc(
-                state: state,
-                edge: edge,
-                clientReady: clientReady,
-                reason: reason,
-                edgeBlocked: edgeBlocked
+                screenRecording: try container.decode(Bool.self, forKey: .screenRecording)
             )
 
         case "stopped":
@@ -245,18 +217,10 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
         case .error(let message):
             try container.encode("error", forKey: .event)
             try container.encode(message, forKey: .message)
-        case .permissions(let inputTrusted, let screenRecording, let inputMonitoring):
+        case .permissions(let inputTrusted, let screenRecording):
             try container.encode("permissions", forKey: .event)
             try container.encode(inputTrusted, forKey: .inputTrusted)
             try container.encode(screenRecording, forKey: .screenRecording)
-            try container.encodeIfPresent(inputMonitoring, forKey: .inputMonitoring)
-        case .uc(let state, let edge, let clientReady, let reason, let edgeBlocked):
-            try container.encode("uc", forKey: .event)
-            try container.encode(state, forKey: .state)
-            try container.encode(edge, forKey: .edge)
-            try container.encode(clientReady, forKey: .clientReady)
-            try container.encodeIfPresent(reason, forKey: .reason)
-            try container.encode(edgeBlocked, forKey: .edgeBlocked)
         case .stopped:
             try container.encode("stopped", forKey: .event)
         case .unknown(let name):

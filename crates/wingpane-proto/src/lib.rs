@@ -10,15 +10,7 @@ pub use control::{ControlMessage, Mode, PenTarget, RejectReason, UcEdge, UcExitR
 pub use frame::{encode_frame, FrameDecoder, FrameError, Packet, VideoPacket, MAX_FRAME_LEN};
 pub use input::{GestureKind, InputEvent, InputPacket, ScrollPhase, TouchPhase};
 
-pub const FEATURE_UNIVERSAL_CONTROL: u32 = 1 << 8;
-pub const FEATURE_CLIPBOARD_TEXT: u32 = 1 << 9;
 pub const FEATURE_EXTENDED_GESTURES: u32 = 1 << 10;
-pub const UC_STATUS_SERVICE_CONNECTED: u32 = 1 << 0;
-pub const UC_STATUS_GESTURES_OK: u32 = 1 << 1;
-pub const UC_STATUS_IME_CONNECTION: u32 = 1 << 2;
-pub const UC_STATUS_KEYGUARD_LOCKED: u32 = 1 << 3;
-pub const UC_STATUS_FGS_RUNNING: u32 = 1 << 4;
-pub const UC_STATUS_OVERLAY_SHOWN: u32 = 1 << 5;
 
 #[cfg(test)]
 mod tests {

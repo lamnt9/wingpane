@@ -26,51 +26,10 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
     private var _lastEvent: DaemonEvent?
     private var _daemonInputTrusted: Bool?
     private var _daemonScreenRecording: Bool?
-    private var _daemonInputMonitoring: Bool?
-    private var _ucState: UcState = .unavailable
-    private var _ucEdge: UcEdge = .right
-    private var _ucClientReady: Bool = false
-    private var _ucReason: String?
-    private var _ucEdgeBlocked: Bool = false
 
     /// Permissions as seen by the daemon process itself (nil until it reports).
     public var daemonInputTrusted: Bool? { lock.lock(); defer { lock.unlock() }; return _daemonInputTrusted }
     public var daemonScreenRecording: Bool? { lock.lock(); defer { lock.unlock() }; return _daemonScreenRecording }
-    public var daemonInputMonitoring: Bool? { lock.lock(); defer { lock.unlock() }; return _daemonInputMonitoring }
-
-    public var ucState: UcState { lock.lock(); defer { lock.unlock() }; return _ucState }
-    public var ucEdge: UcEdge { lock.lock(); defer { lock.unlock() }; return _ucEdge }
-    public var ucClientReady: Bool { lock.lock(); defer { lock.unlock() }; return _ucClientReady }
-    public var ucReason: String? { lock.lock(); defer { lock.unlock() }; return _ucReason }
-    public var ucEdgeBlocked: Bool { lock.lock(); defer { lock.unlock() }; return _ucEdgeBlocked }
-
-    public var isUcEnabled: Bool {
-        let state = ucState
-        return state == .armed || state == .inside
-    }
-
-    public var ucStatusText: String {
-        lock.lock()
-        let state = _ucState
-        let clientReady = _ucClientReady
-        let reason = _ucReason
-        let edgeBlocked = _ucEdgeBlocked
-        lock.unlock()
-
-        if state == .inside {
-            return L("Android: inside", "Android: đang điều khiển")
-        }
-        if reason == "secure_input" {
-            return L("Android: Secure input on", "Android: Mac đang bật nhập bảo mật")
-        }
-        if edgeBlocked {
-            return L("Android: Edge blocked by another display", "Android: cạnh bị màn hình khác chặn")
-        }
-        if !clientReady || reason == "client_not_ready" {
-            return L("Android: Accessibility service off on tablet", "Android: chưa bật dịch vụ Trợ năng trên tablet")
-        }
-        return L("Android: ready", "Android: sẵn sàng")
-    }
 
     // While a menu is open, republishing makes SwiftUI rebuild it and closes open submenus.
     // Dedupe identical states and hold changes until tracking ends.
@@ -259,10 +218,6 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _streamHz = nil
             _streamHiDPI = nil
             _fps = 0
-            _ucState = .unavailable
-            _ucClientReady = false
-            _ucReason = nil
-            _ucEdgeBlocked = false
             _iconState = .waiting
             _statusText = Self.waitingText(_currentDevice?.displayName)
 
@@ -280,25 +235,10 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
             _statusText = LocalizedText("Stopped", "Đã dừng")
             _daemonInputTrusted = nil
             _daemonScreenRecording = nil
-            _daemonInputMonitoring = nil
-            _ucState = .unavailable
-            _ucClientReady = false
-            _ucReason = nil
-            _ucEdgeBlocked = false
 
-        case .permissions(let inputTrusted, let screenRecording, let inputMonitoring):
+        case .permissions(let inputTrusted, let screenRecording):
             _daemonInputTrusted = inputTrusted
             _daemonScreenRecording = screenRecording
-            if let inputMonitoring {
-                _daemonInputMonitoring = inputMonitoring
-            }
-
-        case .uc(let state, let edge, let clientReady, let reason, let edgeBlocked):
-            _ucState = state
-            _ucEdge = edge
-            _ucClientReady = clientReady
-            _ucReason = reason
-            _ucEdgeBlocked = edgeBlocked
 
         case .unknown:
             break
@@ -318,7 +258,7 @@ public final class StatusModel: ObservableObject, @unchecked Sendable {
 
     private func notifyChange() {
         lock.lock()
-        let snapshot = "\(_statusText)|\(_iconState)|\(_devices)|\(String(describing: _currentDevice))|\(_isRunning)|\(String(describing: _daemonInputTrusted))|\(String(describing: _daemonScreenRecording))|\(String(describing: _daemonInputMonitoring))|\(_ucState)|\(_ucEdge)|\(_ucClientReady)|\(String(describing: _ucReason))|\(_ucEdgeBlocked)"
+        let snapshot = "\(_statusText)|\(_iconState)|\(_devices)|\(String(describing: _currentDevice))|\(_isRunning)|\(String(describing: _daemonInputTrusted))|\(String(describing: _daemonScreenRecording))"
         let changed = snapshot != lastSnapshot
         lastSnapshot = snapshot
         lock.unlock()

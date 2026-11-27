@@ -738,12 +738,12 @@ private fun ExpandedHudPanel(
             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
                 Text(stringResource(R.string.hud_stream_mode), style = WingpaneTheme.typography.captionStrong, color = colors.textMuted)
                 Row(horizontalArrangement = Arrangement.spacedBy(spacing.xs), modifier = Modifier.fillMaxWidth()) {
-                    listOf(Mode.ExtendedDisplay to stringResource(R.string.hud_mode_display), Mode.GraphicsTablet to stringResource(R.string.hud_mode_pen), Mode.TrackpadKeyboard to stringResource(R.string.hud_mode_trackpad), Mode.AndroidControl to stringResource(R.string.hud_mode_android)).forEach { (candidate, title) ->
+                    listOf(Mode.ExtendedDisplay to stringResource(R.string.hud_mode_display), Mode.GraphicsTablet to stringResource(R.string.hud_mode_pen), Mode.TrackpadKeyboard to stringResource(R.string.hud_mode_trackpad)).forEach { (candidate, title) ->
                         val enabled = when (candidate) {
                             Mode.ExtendedDisplay -> true
                             Mode.GraphicsTablet -> capabilitiesReceived && (hostFeatures and 1) != 0
                             Mode.TrackpadKeyboard -> capabilitiesReceived && (hostFeatures and 2) != 0
-                            Mode.AndroidControl -> capabilitiesReceived && (hostFeatures and (1 shl 8)) != 0
+                            Mode.AndroidControl -> false // reserved, not offered
                         }
                         val selected = candidate == mode
                         Box(modifier = Modifier.weight(1f).heightIn(min = touch.minTarget).clip(RoundedCornerShape(spacing.sm)).background(if (selected) colors.primary else colors.surface2).border(1.dp, colors.border, RoundedCornerShape(spacing.sm)).clickable(enabled = enabled, role = Role.Button) { onPanelInteraction(); onModeChange(candidate) }.padding(horizontal = spacing.xs, vertical = spacing.xs), contentAlignment = Alignment.Center) {

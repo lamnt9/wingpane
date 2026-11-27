@@ -1,7 +1,6 @@
 package io.wingpane
 
 import android.content.pm.ActivityInfo
-import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -43,28 +42,19 @@ import io.wingpane.ui.hud.StreamTouchPoint
 import io.wingpane.ui.screen.ConnectionScreen
 import io.wingpane.ui.screen.PenCanvasScreen
 import io.wingpane.ui.screen.TrackpadScreen
-import io.wingpane.ui.screen.AndroidControlScreen
-import io.wingpane.uc.WingpaneAccessibilityService
-import android.provider.Settings
 import io.wingpane.ui.state.ClientStateMapper
 import io.wingpane.ui.theme.WingpaneTheme
 import io.wingpane.video.VideoDecoder
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private lateinit var client: WingpaneClient
-    private var ucServiceCheck: Job? = null
     private val clockSyncCallback: (io.wingpane.net.ClockOffsetEstimator.Estimate) -> Unit = { sync ->
         decoder.updateClockSync(sync.offsetUs, sync.rttUs)
     }
     private lateinit var decoder: VideoDecoder
     private var clientState by mutableStateOf<ClientState>(ClientState.Waiting)
     private var mode by mutableStateOf(Mode.ExtendedDisplay)
-    private var ucServiceConnected by mutableStateOf(false)
-    private var ucFgsRunning by mutableStateOf(false)
-    private var ucEdge by mutableStateOf<io.wingpane.proto.UcEdge?>(null)
     private var activeTrackpadDetector: TrackpadGestureDetector? = null
     private var stats by mutableStateOf(VideoDecoder.Stats(0f, 0, 0, 0, 0, 0, 0, 0, 0))
     private var lastBitrateKbps by mutableStateOf(0u)
@@ -122,19 +112,6 @@ class MainActivity : ComponentActivity() {
                         touchMapperWidth = w
                         touchMapperHeight = h
                         decoder.configure(w, h)
-                    }
-                }
-            }
-        }
-        lifecycleScope.launch {
-            client.ucControl.collect { message ->
-                if (message is ControlMessage.SetMode) {
-                    cancelTouch()
-                    mode = message.mode
-                    (application as WingpaneApplication).currentMode = mode
-                    if (mode == Mode.AndroidControl && WingpaneAccessibilityService.current() != null) {
-                        (application as WingpaneApplication).startUcServiceIfEligible()
-                        moveTaskToBack(true)
                     }
                 }
             }
@@ -243,7 +220,7 @@ class MainActivity : ComponentActivity() {
                             }
                             if (allowed) client.sendInput(event)
                         } })
-                        Mode.ExtendedDisplay, Mode.AndroidControl -> Unit
+                        Mode.ExtendedDisplay, Mode.AndroidControl -> Unit // AndroidControl: reserved, never selected
                     }
                     if (uiModel.isStreamScreen) {
                         StreamHudOverlay(
@@ -278,14 +255,8 @@ class MainActivity : ComponentActivity() {
                             mode = mode,
                             hostFeatures = hostFeatures,
                             capabilitiesReceived = hostCapabilitiesReceived,
-                            onModeChange = modeChange@ { next ->
+                            onModeChange = { next ->
                                 if (next != mode) {
-                                    if (next == Mode.AndroidControl && !client.supportsUniversalControl()) return@modeChange
-                                    if (next == Mode.AndroidControl && WingpaneAccessibilityService.current() == null) {
-                                        android.widget.Toast.makeText(this@MainActivity, R.string.uc_enable_service_hint, android.widget.Toast.LENGTH_LONG).show()
-                                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                                        return@modeChange
-                                    }
                                     cancelTouch()
                                     mode = next
                                     (application as WingpaneApplication).currentMode = next
@@ -298,10 +269,6 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch {
                                         client.sendControl(ControlMessage.SetMode(next))
                                         if (next == Mode.ExtendedDisplay) client.sendControl(ControlMessage.RequestKeyframe)
-                                    }
-                                    if (next == Mode.AndroidControl) {
-                                        (application as WingpaneApplication).startUcServiceIfEligible()
-                                        moveTaskToBack(true)
                                     }
                                 }
                             },
@@ -335,15 +302,6 @@ class MainActivity : ComponentActivity() {
                                 client.disconnect()
                                 client.connect()
                             },
-                        )
-                    }
-                    if (uiModel.isStreamScreen && mode == Mode.AndroidControl) {
-                        AndroidControlScreen(
-                            serviceConnected = ucServiceConnected,
-                            fgsRunning = ucFgsRunning,
-                            edge = ucEdge,
-                            onDisplay = { handleUcNotificationAction(Intent().setAction(io.wingpane.uc.UcForegroundService.ACTION_DISPLAY)) },
-                            onAccessibilitySettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                         )
                     }
                 }
@@ -503,51 +461,18 @@ class MainActivity : ComponentActivity() {
         activeTrackpadDetector?.onTouch(TrackpadGestureDetector.Action.Cancel, emptyList(), SystemClock.uptimeMillis())?.forEach(client::sendInput)
     }
 
-    override fun onResume() {
-        super.onResume()
-        handleUcNotificationAction(intent)
-        val app = application as WingpaneApplication
-        if ((app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
-            intent?.hasExtra("uc_force_fgs") == true) {
-            app.ucForceFgs = intent.getBooleanExtra("uc_force_fgs", false)
-        }
-        ucServiceCheck = lifecycleScope.launch {
-            while (true) {
-                app.startUcServiceIfEligible()
-                ucServiceConnected = WingpaneAccessibilityService.current() != null
-                ucFgsRunning = app.foregroundServiceRunning
-                ucEdge = WingpaneAccessibilityService.current()?.ucEdge()
-                delay(500)
-            }
-        }
-    }
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleUcNotificationAction(intent)
-    }
-    private fun handleUcNotificationAction(intent: Intent?) {
-        if (intent?.action != io.wingpane.uc.UcForegroundService.ACTION_DISPLAY) return
-        intent.action = null
-        mode = Mode.ExtendedDisplay
-        (application as WingpaneApplication).currentMode = mode
-        lifecycleScope.launch {
-            client.sendControl(ControlMessage.SetMode(Mode.ExtendedDisplay))
-            client.sendControl(ControlMessage.RequestKeyframe)
-        }
-    }
     override fun onStart() {
         super.onStart()
         client.videoSinkAttached = true
         if (client.isActive()) lifecycleScope.launch { client.sendControl(ControlMessage.RequestKeyframe) }
     }
-    override fun onPause() { ucServiceCheck?.cancel(); ucServiceCheck = null; cancelTouch(); super.onPause() }
+    override fun onPause() { cancelTouch(); super.onPause() }
     override fun onStop() { client.videoSinkAttached = false; cancelTouch(); super.onStop() }
     override fun onDestroy() {
         cancelTouch()
         if (client.onClockSync === clockSyncCallback) client.onClockSync = null
         val app = application as WingpaneApplication
-        if (!isChangingConfigurations && !app.foregroundServiceRunning) {
+        if (!isChangingConfigurations) {
             client.cancel()
             app.clientHolder.clear()
         }

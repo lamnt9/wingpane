@@ -19,106 +19,13 @@ import kotlin.coroutines.ContinuationInterceptor
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class WingpaneClientTest {
-    @Test fun clientCapabilitiesIncludeUniversalControlOnlyWhenEnabled() {
-        assertEquals(0u, clientFeatures(false) and (1u shl 8))
-        assertEquals(1u shl 8, clientFeatures(true) and (1u shl 8))
-        assertEquals(0u, clientFeatures(false) and (1u shl 9))
-        assertEquals(1u shl 9, clientFeatures(true) and (1u shl 9))
-    }
 
-    @Test fun advertisedCapabilitiesCarryBitEightWhenEnabled() = runTest {
-        val observed = java.util.concurrent.atomic.AtomicReference<ControlMessage.Capabilities?>()
-        val srv = server { socket, _ ->
-            readPacket(socket)
-            socket.getOutputStream().write(accept.encodeFrame())
-            while (observed.get() == null) {
-                val packet = readPacket(socket)
-                if (packet is Packet.Control && packet.message is ControlMessage.Capabilities)
-                    observed.set(packet.message)
-            }
-            try { while (true) readPacket(socket) } catch (_: Throwable) { }
-        }
-        val client = WingpaneClient(
-            deviceName = { "Unit Test" }, screenSizePx = { 1920 to 1080 },
-            supportedCodecs = { listOf(VideoCodec.H264) }, refreshRateHz = { 60 },
-            scope = backgroundScope,
-            ioDispatcher = coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
-            universalControlEnabled = true,
-        )
-        try {
-            client.connect("127.0.0.1", srv.port)
-            awaitClient(this, client) { observed.get() != null }
-            assertEquals(1u shl 8, observed.get()!!.features and (1u shl 8))
-        } finally { client.cancel(); srv.close() }
-    }
 
-    @Test fun hostUcEnterReachesDedicatedControlFlow() = runTest {
-        val written = CountDownLatch(1)
-        val enter = ControlMessage.UcEnter(UcEdge.Right, 0.375f, 2u.toUByte())
-        val srv = server { socket, _ ->
-            readPacket(socket)
-            socket.getOutputStream().write(accept.encodeFrame())
-            // Like wingpaned: answer the client's Capabilities, so nothing rides in the Accept read chunk.
-            while (readPacket(socket).let { !(it is Packet.Control && it.message is ControlMessage.Capabilities) }) { }
-            socket.getOutputStream().write(Packet.Control(ControlMessage.Capabilities(1u shl 8)).encodeFrame())
-            socket.getOutputStream().write(Packet.Control(enter).encodeFrame())
-            written.countDown()
-            try { while (true) readPacket(socket) } catch (_: Throwable) { }
-        }
-        val client = WingpaneClient(
-            deviceName = { "Unit Test" }, screenSizePx = { 1920 to 1080 },
-            supportedCodecs = { listOf(VideoCodec.H264) }, refreshRateHz = { 60 },
-            scope = backgroundScope,
-            ioDispatcher = coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
-            universalControlEnabled = true,
-        )
-        try {
-            val received = async { withTimeout(5_000) { client.ucControl.first() } }
-            runCurrent()
-            client.connect("127.0.0.1", srv.port)
-            runCurrent()
-            awaitClient(this, client) { client.hostCapabilitiesReceived.value }
-            await(written)
-            awaitClient(this, client) { received.isCompleted }
-            assertEquals(enter, received.await())
-        } finally { client.cancel(); srv.close() }
-    }
 
-    @Test fun androidModeIsNotSentWithoutHostBitEight() = runTest {
-        val accepted = CountDownLatch(1)
-        val checked = CountDownLatch(1)
-        val sent = java.util.concurrent.atomic.AtomicBoolean(false)
-        val srv = server { socket, _ ->
-            readPacket(socket)
-            socket.getOutputStream().write(accept.encodeFrame())
-            accepted.countDown()
-            socket.soTimeout = 300
-            try {
-                while (true) {
-                    val p = readPacket(socket)
-                    if (p is Packet.Control && p.message == ControlMessage.SetMode(Mode.AndroidControl)) sent.set(true)
-                }
-            } catch (_: java.net.SocketTimeoutException) { }
-            finally { checked.countDown() }
-        }
-        val client = WingpaneClient(
-            deviceName = { "Unit Test" }, screenSizePx = { 1920 to 1080 },
-            supportedCodecs = { listOf(VideoCodec.H264) }, refreshRateHz = { 60 },
-            scope = backgroundScope,
-            ioDispatcher = coroutineContext[ContinuationInterceptor] as CoroutineDispatcher,
-            universalControlEnabled = true,
-        )
-        try {
-            client.connect("127.0.0.1", srv.port)
-            runCurrent()
-            await(accepted)
-            awaitClient(this, client) { client.state.value is ClientState.Active }
-            client.sendControl(ControlMessage.SetMode(Mode.AndroidControl))
-            assertFalse(client.supportsUniversalControl())
-            await(checked)
-            assertFalse("AndroidControl sent without bit 8", sent.get())
-        } finally { client.cancel(); srv.close() }
-    }
+
+
+
+
     private val accept = Packet.Control(ControlMessage.Accept(
         Mode.ExtendedDisplay, null, VideoCodec.H264, 20_000u
     ))

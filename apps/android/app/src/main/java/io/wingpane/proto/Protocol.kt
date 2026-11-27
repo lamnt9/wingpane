@@ -8,18 +8,16 @@ import java.nio.charset.CodingErrorAction
 const val PROTO_VERSION = 1
 const val MAX_FRAME_LEN = 8 * 1024 * 1024
 
-enum class Mode { ExtendedDisplay, GraphicsTablet, TrackpadKeyboard, AndroidControl }
+enum class Mode {
+    ExtendedDisplay, GraphicsTablet, TrackpadKeyboard,
+    /** reserved: Universal Control removed 2026-11-28 */
+    AndroidControl
+}
+/** reserved: Universal Control removed 2026-11-28 */
 enum class UcEdge { Left, Right, Top, Bottom }
+/** reserved: Universal Control removed 2026-11-28 */
 enum class UcExitReason { CursorReturned, Hotkey, ModeChanged, ClientNotReady, TapDisabled, Watchdog, SecureInput, MacLocked, SessionEnded }
 enum class ScrollPhase { Discrete, Began, Changed, Ended, Momentum }
-const val FEATURE_UNIVERSAL_CONTROL = 1 shl 8
-const val FEATURE_CLIPBOARD_TEXT = 1 shl 9
-const val UC_STATUS_SERVICE_CONNECTED = 1 shl 0
-const val UC_STATUS_GESTURES_OK = 1 shl 1
-const val UC_STATUS_IME_CONNECTION = 1 shl 2
-const val UC_STATUS_KEYGUARD_LOCKED = 1 shl 3
-const val UC_STATUS_FGS_RUNNING = 1 shl 4
-const val UC_STATUS_OVERLAY_SHOWN = 1 shl 5
 enum class PenTarget { MainDisplay, VirtualDisplay }
 enum class VideoCodec { H264, Hevc }
 enum class TouchPhase { Down, Move, Up, Cancel }
@@ -56,6 +54,7 @@ sealed interface InputEvent {
     data class Keyboard(val usbHidUsage: UShort, val isDown: Boolean, val modifiers: UByte) : InputEvent
     data class MouseButton(val button: UByte, val isDown: Boolean) : InputEvent
     data class Text(val text: String) : InputEvent
+    /** reserved: Universal Control removed 2026-11-28 */
     data class PreciseScroll(val dx: Float, val dy: Float, val phase: ScrollPhase) : InputEvent
 }
 data class InputPacket(val seq: UInt, val tsUs: ULong, val event: InputEvent)
@@ -75,10 +74,15 @@ sealed interface ControlMessage {
     data class HostTime(val echoNs: ULong, val hostUs: ULong) : ControlMessage
     data class Capabilities(val features: UInt) : ControlMessage
     data class PenConfig(val pressureCurve: List<Float>, val target: PenTarget) : ControlMessage
+    /** reserved: Universal Control removed 2026-11-28 */
     data class UcConfig(val edge: UcEdge) : ControlMessage
+    /** reserved: Universal Control removed 2026-11-28 */
     data class UcEnter(val edge: UcEdge, val along: Float, val imeHint: UByte) : ControlMessage
+    /** reserved: Universal Control removed 2026-11-28 */
     data class UcExit(val along: Float, val reason: UcExitReason) : ControlMessage
+    /** reserved: Universal Control removed 2026-11-28 */
     data class UcStatus(val flags: UInt) : ControlMessage
+    /** reserved: Universal Control removed 2026-11-28 */
     data class Clipboard(val text: String) : ControlMessage
 }
 sealed interface Packet {

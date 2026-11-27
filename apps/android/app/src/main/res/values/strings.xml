@@ -1,25 +1,4 @@
 <resources>
-    <string name="uc_notification_channel">Android control</string>
-    <string name="uc_notification_title">Wingpane</string>
-    <string name="uc_notification_text">Mac is controlling your tablet</string>
-    <string name="uc_action_display">Back to Display</string>
-    <string name="uc_action_return_mouse">Return mouse to Mac</string>
-    <string name="uc_action_send_clipboard">Send clipboard to Mac</string>
-    <string name="uc_accessibility_service_name">Wingpane universal control</string>
-    <string name="uc_accessibility_service_description">Lets a connected computer control taps and gestures on this tablet. Some banking apps may block use while an Accessibility service is enabled.</string>
-    <string name="hud_mode_android">Android</string>
-    <string name="uc_screen_title">Android control</string>
-    <string name="uc_service_on">Accessibility service connected</string>
-    <string name="uc_service_off">Accessibility service disconnected</string>
-    <string name="uc_fgs_on">Background connection active</string>
-    <string name="uc_fgs_off">Background connection inactive</string>
-    <string name="uc_edge">Mac edge: %1$s</string>
-    <string name="uc_open_accessibility">Open Accessibility settings</string>
-    <string name="uc_enable_service_hint">Enable Wingpane Universal Control in Accessibility settings, then return here.</string>
-    <string name="uc_gain">Pointer gain: %1$.1f</string>
-    <string name="uc_reverse_scroll">Reverse scroll direction</string>
-    <string name="uc_old_tone">Old Vietnamese tone placement</string>
-    <string name="uc_limitations">Touch gestures do not provide hover or mouse text selection. Some banking apps may block Accessibility services.</string>
     <string name="app_name">Wingpane</string>
     <string name="footer_version">Wingpane v0.1 · Protocol v1</string>
     <string name="protocol_v1">Protocol v1</string>

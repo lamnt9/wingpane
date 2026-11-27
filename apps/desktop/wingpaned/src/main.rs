@@ -1,5 +1,4 @@
 mod ffi;
-use wingpaned::uc::{self, BridgeEvent, UcAction, UcCommand, UcState, StatusEvent, DeviceStatus};
 use std::io::Write;
 use std::{
     ffi::c_void,
@@ -12,11 +11,11 @@ use std::{
 };
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::{mpsc, watch},
+    sync::mpsc,
     task::JoinSet,
 };
 use wingpane_core::{session::Session, transport::tcp::FramedTcp};
-use wingpane_proto::{ControlMessage, Mode, Packet, RejectReason, TouchPhase, VideoPacket, UcEdge, FEATURE_UNIVERSAL_CONTROL, FEATURE_CLIPBOARD_TEXT};
+use wingpane_proto::{ControlMessage, Mode, Packet, RejectReason, TouchPhase, VideoPacket};
 use wingpaned::{
     busy_rejection, display_transition, should_send_video, DisplayTransition, EncodedFrame, FrameQueue, InputRouter, InputSink, SessionResources,
 };
@@ -213,7 +212,6 @@ impl InputSink for NativeInputSink {
         };
     }
     fn release_all(&self) {
-        ffi::UcBridge::release();
         unsafe { wp_input_release_all() }
     }
     fn pen(&self, sample: wingpaned::PenSample) {
@@ -308,6 +306,31 @@ unsafe fn request_keyframe(handle: u64) {
     wp_capture_force_keyframe(handle);
 }
 
+#[derive(serde::Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum StatusEvent {
+    Starting { version: String },
+    AdbMissing,
+    WaitingDevice { reason: String, devices: Vec<DeviceStatus> },
+    Device { serial: String, #[serde(skip_serializing_if = "Option::is_none")] model: Option<String> },
+    Listening { port: u16 },
+    ClientConnected { peer: String },
+    Streaming { width: u32, height: u32, hz: u32, hidpi: bool, input_trusted: bool },
+    Mode { mode: Mode },
+    Permissions { input_trusted: bool, screen_recording: bool },
+    Stats { fps: u64, encode_p95_ms: f64, write_p95_ms: f64, backlog_dropped: u64 },
+    ClientDisconnected { reason: String },
+    Error { message: String },
+    Stopped,
+}
+#[derive(serde::Serialize)]
+struct DeviceStatus {
+    serial: String,
+    state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+}
+
 #[derive(Clone)]
 struct Options {
     port: u16,
@@ -318,11 +341,12 @@ struct Options {
     serial: Option<String>,
     stats: bool,
     status_json: bool,
-    uc_edge: UcEdge,
 }
 
 fn emit_status(event: StatusEvent) {
-    let line = uc::status_line(&event);
+    let mut line = serde_json::to_vec(&event).unwrap_or_else(|_| br#"{"event":"error","message":"status serialization failed"}"#.to_vec());
+    if line.len() > 4095 { line = br#"{"event":"error","message":"status event exceeded 4 KiB"}"#.to_vec(); }
+    line.push(b'\n');
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let _ = out.write_all(&line);
@@ -338,7 +362,6 @@ fn options() -> Options {
         serial: std::env::var("ANDROID_SERIAL").ok(),
         stats: false,
         status_json: false,
-        uc_edge: UcEdge::Right,
     };
     let mut a = std::env::args().skip(1);
     while let Some(k) = a.next() {
@@ -349,10 +372,6 @@ fn options() -> Options {
             "--stats" => o.stats = true,
             "--status-json" => o.status_json = true,
             "--serial" => o.serial = a.next(),
-            "--uc-edge" => {
-                if let Some(edge) = a.next().as_deref().and_then(uc::parse_edge) { o.uc_edge = edge; }
-                else { eprintln!("invalid --uc-edge; expected left|right|top|bottom"); }
-            }
             "--hidpi" => o.hidpi = a.next().map(|v| v != "false").unwrap_or(true),
             "--bitrate-mbps" => {
                 o.bitrate = a.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(20) * 1_000_000
@@ -365,9 +384,6 @@ fn options() -> Options {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let previous_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| { ffi::UcBridge::release(); previous_hook(info); }));
-    let _uc_guard = ffi::UcReleaseGuard;
     if std::env::args().any(|arg| arg == "--request-permissions") {
         // One-shot: get this binary listed in Accessibility / Screen Recording, then exit.
         unsafe {
@@ -382,15 +398,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
-        println!("Usage: wingpaned [--help] [--port <port>] [--no-adb] [--serial <id>] [--hidpi <true|false>] [--bitrate-mbps <n>] [--test-pattern] [--stats] [--status-json] [--uc-edge <left|right|top|bottom>]");
+        println!("Usage: wingpaned [--help] [--port <port>] [--no-adb] [--serial <id>] [--hidpi <true|false>] [--bitrate-mbps <n>] [--test-pattern] [--stats] [--status-json]");
         return Ok(());
     }
     let mut opts = options();
-    let (command_tx, command_rx) = watch::channel(UcCommand::new(opts.uc_edge));
     if opts.status_json {
-        // A dedicated stdin thread avoids Tokio's uncancellable blocking stdin
-        // task holding runtime shutdown open while the app keeps its pipe open.
-        std::thread::spawn(move || read_commands(std::io::stdin().lock(), command_tx));
+        // Keep the blocking read off Tokio; parent-process polling handles shutdown.
+        std::thread::spawn(|| wait_for_stdin_eof(std::io::stdin().lock()));
     }
     if opts.status_json {
         emit_status(StatusEvent::Starting {
@@ -400,10 +414,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async {
             let mut last: Option<(bool, bool, bool)> = None;
             loop {
-                let now = unsafe { (wp_input_trusted(), wp_screen_capture_trusted(), ffi::UcBridge::input_monitoring()) };
+                let now = unsafe { (wp_input_trusted(), wp_screen_capture_trusted(), false) };
                 if last != Some(now) {
                     last = Some(now);
-                    emit_status(StatusEvent::Permissions { input_trusted: now.0, screen_recording: now.1, input_monitoring: now.2 });
+                    emit_status(StatusEvent::Permissions { input_trusted: now.0, screen_recording: now.1 });
                 }
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
@@ -479,7 +493,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("client connected: {peer}");
                 if opts.status_json { emit_status(StatusEvent::ClientConnected { peer: peer.to_string() }); }
                 let status = opts.status_json;
-                sessions.spawn(run_session(stream, opts.clone(), status, command_rx.clone()));
+                sessions.spawn(run_session(stream, opts.clone(), status));
             }
             _ = sessions.join_next(), if !sessions.is_empty() => {}
         }
@@ -777,9 +791,6 @@ async fn adb(args: &[&str]) -> Result<std::process::Output, std::io::Error> {
 }
 
 // WP-U5 extraction boundary: the display transition body below is unchanged.
-#[derive(Clone, Copy)]
-enum ModeOrigin { Client, Host }
-
 struct ModeContext<'a> {
     status_json: bool,
     client_video_suspend: &'a AtomicBool,
@@ -799,14 +810,12 @@ struct ModeContext<'a> {
     awaiting_key: &'a AtomicBool,
 }
 impl ModeContext<'_> {
-    fn apply_mode(&self, next_mode: Mode, origin: ModeOrigin, input_router: &mut InputRouter<'_>, uc_state: &mut UcState, control_tx: &mpsc::UnboundedSender<Packet>) -> Result<(), ()> {
-        if next_mode == Mode::AndroidControl && !uc_state.negotiated() {
-            if self.status_json { emit_status(StatusEvent::Error {message:"Universal Control unavailable or peer bit 8 missing".into()}); }
+    fn apply_mode(&self, next_mode: Mode, input_router: &mut InputRouter<'_>) -> Result<(), ()> {
+        if next_mode == Mode::AndroidControl {
+            eprintln!("ignoring removed AndroidControl mode request");
             return Ok(());
         }
-        dispatch_uc(uc_state.on_mode(next_mode), control_tx, self.status_json);
         // Every mode change restores local input before InputRouter::set_mode.
-        ffi::UcBridge::release();
         let previous_mode = input_router.mode();
         input_router.set_mode(next_mode);
         self.shared_mode.store(
@@ -814,7 +823,7 @@ impl ModeContext<'_> {
                 Mode::ExtendedDisplay => 0,
                 Mode::GraphicsTablet => 1,
                 Mode::TrackpadKeyboard => 2,
-                Mode::AndroidControl => 3,
+                Mode::AndroidControl => unreachable!("removed mode is rejected above"),
             },
             Ordering::Release,
         );
@@ -876,16 +885,11 @@ impl ModeContext<'_> {
             }
             DisplayTransition::None => {}
         }
-        uc_state.detector.set_displays(ffi::UcBridge::displays());
-        if matches!(origin, ModeOrigin::Host) && uc_state.negotiated() {
-            let _ = control_tx.send(Packet::Control(ControlMessage::SetMode(next_mode)));
-        }
         Ok(())
     }
 }
 
-async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut command_rx: watch::Receiver<UcCommand>) {
-    let _uc_guard = ffi::UcReleaseGuard;
+async fn run_session(stream: TcpStream, opts: Options, status_json: bool) {
     let mut end_log = DisconnectLog {
         reason: "session setup ended".to_owned(),
         status_json,
@@ -1015,9 +1019,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
     let display_id = Arc::new(AtomicU32::new(display.id()));
     let capture_slot = Arc::new(Mutex::new(Some(capture)));
     let display_slot = Arc::new(Mutex::new(Some(display)));
-    let uc_bridge = Arc::new(ffi::UcBridge::default());
     let mut resources = SessionResources {
-        uc: Box::new(ffi::UcGuard(uc_bridge.clone())),
         capture: Box::new(CaptureSlot(capture_slot.clone())),
         input: Box::new(NativeInputSink(display_id.clone())),
         display: Box::new(DisplaySlot(display_slot.clone())),
@@ -1072,7 +1074,6 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                     let mode = match writer_mode.load(Ordering::Acquire) {
                         1 => Mode::GraphicsTablet,
                         2 => Mode::TrackpadKeyboard,
-                        3 => Mode::AndroidControl,
                         _ => Mode::ExtendedDisplay,
                     };
                     let suspend = writer_video_suspend.load(Ordering::Acquire);
@@ -1101,25 +1102,11 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
         client_w, client_h, bitrate, awaiting_key: &awaiting_key,
     };
     let mut input_router = InputRouter::new(Mode::ExtendedDisplay, resources.input.as_mut());
-    let mut uc_state = UcState::new(opts.uc_edge, ffi::UcBridge::displays());
-    let (uc_tx, mut uc_rx) = mpsc::unbounded_channel();
-    let mut uc_available = ffi::UcBridge::available();
-    let mut uc_started = false;
-    let mut peer_features = 0;
-    let mut uc_tick = tokio::time::interval(Duration::from_millis(250));
-    let mut refresh_at = tokio::time::Instant::now();
-    let mut commands_open = true;
-    let mut applied_command = UcCommand::new(opts.uc_edge);
-    let mut previous_mode = Mode::ExtendedDisplay;
-    // The client pings every 500 ms (TS-2); its pings are the UC liveness signal.
-    let mut last_client_ping = tokio::time::Instant::now();
-    if status_json { emit_status(StatusEvent::Uc {status:uc_state.status(None)}); }
     let mut unknown_packet_warned = false;
     let mut input_trusted = unsafe { wp_input_trusted() };
     let mut client_capabilities_seen = false;
     let mut trust_check_at = tokio::time::Instant::now();
     loop {
-        let delta_wait = uc_state.delta_deadline_us().map(|d| Duration::from_micros(d.saturating_sub(ffi::host_time_us()))).unwrap_or(Duration::from_secs(3600));
         let received = tokio::select! { biased;
                 _ = &mut writer_task => { end_log.reason = "writer ended".into(); break; }
                 // Apply queued client requests before a simultaneous host command;
@@ -1128,64 +1115,6 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                     Some(result) => Some(result),
                     None => { end_log.reason = "reader ended".into(); break; }
                 },
-                _ = tokio::time::sleep(delta_wait), if uc_state.delta_deadline_us().is_some() => {
-                    dispatch_uc(uc_state.tick(ffi::host_time_us()), &control_tx, status_json);
-                    None
-                }
-                Some((event, now_us)) = uc_rx.recv() => {
-                    if let Some(event) = ffi::UcBridge::event(event, now_us) {
-                        dispatch_uc(uc_state.on_bridge_with_clipboard(event, &mut ffi::NativeClipboard), &control_tx, status_json);
-                    }
-                    None
-                }
-                result = command_rx.changed(), if commands_open => {
-                    if result.is_err() { commands_open = false; }
-                    else if client_capabilities_seen {
-                        let command = command_rx.borrow_and_update().clone();
-                        if apply_commands(&command, &mut applied_command, &mut previous_mode, &mode_context,
-                            &mut input_router, &mut uc_state, &control_tx).is_err() {
-                            end_log.reason = "display recreation failed".into(); break;
-                        }
-                    }
-                    None
-                }
-                _ = uc_tick.tick() => {
-                    if uc_started && !unsafe { wp_input_trusted() } {
-                        uc_available = false;
-                        input_trusted = false;
-                        dispatch_uc(uc_state.on_bridge(BridgeEvent::Status {tap_ok:false, secure_input:false}), &control_tx, status_json);
-                        uc_bridge.stop();
-                        uc_started = false;
-                        input_router.set_mode(input_router.mode()); // UC is released before release_all.
-                        if client_capabilities_seen {
-                            let _ = control_tx.send(Packet::Control(ControlMessage::Capabilities {features:host_features(false,false)}));
-                        }
-                    }
-                    if uc_started { ffi::UcBridge::heartbeat(); }
-                    dispatch_uc(uc_state.tick(ffi::host_time_us()), &control_tx, status_json);
-                    if tokio::time::Instant::now() >= refresh_at {
-                        refresh_at = tokio::time::Instant::now() + Duration::from_secs(2);
-                        uc_state.detector.set_displays(ffi::UcBridge::displays());
-                        let available = ffi::UcBridge::available();
-                        let trusted = unsafe { wp_input_trusted() };
-                        let changed = available != uc_available || trusted != input_trusted;
-                        uc_available = available; input_trusted = trusted;
-                        if changed && client_capabilities_seen {
-                            let _ = control_tx.send(Packet::Control(ControlMessage::Capabilities {features:host_features(input_trusted, uc_available)}));
-                        }
-                        if !uc_available && uc_started { uc_bridge.stop(); uc_started = false; }
-                        if uc_available && peer_features & FEATURE_UNIVERSAL_CONTROL != 0 && !uc_started {
-                            uc_started = uc_bridge.start(uc_tx.clone());
-                        }
-                        dispatch_uc(uc_state.on_capabilities(peer_features, uc_available && uc_started), &control_tx, status_json);
-                    }
-                    // U4 reports secure=true but not the transition back to false.
-                    dispatch_uc(uc_state.on_bridge(BridgeEvent::Status {tap_ok:uc_available && uc_started, secure_input:ffi::UcBridge::secure_input()}), &control_tx, status_json);
-                    if uc_state.negotiated() && last_client_ping.elapsed() >= Duration::from_secs(3) {
-                        end_log.reason = "UC ping timeout".into(); break;
-                    }
-                    None
-                }
                 _ = stats_tick.tick(), if opts.stats || status_json => {
                     let ctx = unsafe { &*(context_addr as *const CallbackContext) };
                     let handle = ctx.handle.load(Ordering::Relaxed);
@@ -1229,13 +1158,9 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                 break;
             }
             Ok(Some(Packet::Control(message))) => {
-                if matches!(message, ControlMessage::Ping(_)) { last_client_ping = tokio::time::Instant::now(); }
                 let message = match message {
                     ControlMessage::SetMode(next_mode) => {
-                        if next_mode == Mode::AndroidControl && input_router.mode() != Mode::AndroidControl {
-                            previous_mode = input_router.mode();
-                        }
-                        if mode_context.apply_mode(next_mode, ModeOrigin::Client, &mut input_router, &mut uc_state, &control_tx).is_err() {
+                        if mode_context.apply_mode(next_mode, &mut input_router).is_err() {
                             end_log.reason = "display recreation failed".into();
                             break;
                         }
@@ -1248,34 +1173,10 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                         input_router.set_pen_config(pressure_curve, target);
                         continue;
                     }
-                    ControlMessage::UcExit {..} | ControlMessage::UcStatus {..} | ControlMessage::Clipboard {..} => {
-                        dispatch_uc(uc_state.on_client_with_clipboard(message, &mut ffi::NativeClipboard), &control_tx, status_json);
-                        continue;
-                    }
                     ControlMessage::Capabilities { features } => {
                         client_capabilities_seen = true;
-                        if peer_features & FEATURE_UNIVERSAL_CONTROL == 0 && features & FEATURE_UNIVERSAL_CONTROL != 0 {
-                            last_client_ping = tokio::time::Instant::now();
-                        }
-                        peer_features = features;
-                        // Bit 8 also promises AndroidControl, which always removes
-                        // the display and suspends video (D-1), even without bit 7.
-                        client_video_suspend.store(features & (FEATURE_VIDEO_SUSPEND | FEATURE_UNIVERSAL_CONTROL) != 0, Ordering::Release);
-                        let _ = control_tx.send(Packet::Control(ControlMessage::Capabilities {features:host_features(input_trusted,uc_available)}));
-                        if features & FEATURE_UNIVERSAL_CONTROL != 0 && uc_available && !uc_started {
-                            uc_started = uc_bridge.start(uc_tx.clone());
-                            if !uc_started {
-                                uc_available = false;
-                                let _ = control_tx.send(Packet::Control(ControlMessage::Capabilities {features:host_features(input_trusted,false)}));
-                            }
-                        }
-                        dispatch_uc(uc_state.on_capabilities(features,uc_available && uc_started), &control_tx,status_json);
-                        if features & FEATURE_UNIVERSAL_CONTROL == 0 && uc_started { uc_bridge.stop(); uc_started=false; }
-                        let command = command_rx.borrow_and_update().clone();
-                        if apply_commands(&command, &mut applied_command, &mut previous_mode, &mode_context,
-                            &mut input_router, &mut uc_state, &control_tx).is_err() {
-                            end_log.reason = "display recreation failed".into(); break;
-                        }
+                        client_video_suspend.store(features & FEATURE_VIDEO_SUSPEND != 0, Ordering::Release);
+                        let _ = control_tx.send(Packet::Control(ControlMessage::Capabilities {features:host_features(input_trusted)}));
                         continue;
                     }
                     other => other,
@@ -1284,7 +1185,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                     resources.capture.as_ref(),
                     message,
                     ffi::host_time_us(),
-                    host_features(input_trusted,uc_available),
+                    host_features(input_trusted),
                 ) {
                     if control_tx.send(Packet::Control(reply)).is_err() {
                         break;
@@ -1304,7 +1205,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                         }
                         if client_capabilities_seen {
                             let features =
-                                host_features(input_trusted,uc_available);
+                                host_features(input_trusted);
                             let _ = control_tx
                                 .send(Packet::Control(ControlMessage::Capabilities { features }));
                         }
@@ -1315,7 +1216,6 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
             Ok(Some(_)) => {}
         }
     }
-    dispatch_uc(uc_state.end_session(), &control_tx, status_json);
     drop(_test_pattern);
     drop(input_router);
     drop(resources);
@@ -1427,87 +1327,17 @@ mod tests {
 struct AbortTask(tokio::task::AbortHandle);
 impl Drop for AbortTask { fn drop(&mut self) { self.0.abort(); } }
 
-fn host_features(input_trusted: bool, uc_available: bool) -> u32 {
+fn host_features(input_trusted: bool) -> u32 {
     HOST_INPUT_FEATURES | if input_trusted {1<<6} else {0}
-        | if uc_available && input_trusted {FEATURE_UNIVERSAL_CONTROL | FEATURE_CLIPBOARD_TEXT} else {0}
 }
 
-#[cfg(test)]
-#[test]
-fn clipboard_feature_is_advertised_only_with_universal_control() {
-    let both = FEATURE_UNIVERSAL_CONTROL | FEATURE_CLIPBOARD_TEXT;
-    assert_eq!(host_features(false, true) & both, 0);
-    assert_eq!(host_features(true, false) & both, 0);
-    assert_eq!(host_features(true, true) & both, both);
-}
 
-fn dispatch_uc(actions: Vec<UcAction>, tx: &mpsc::UnboundedSender<Packet>, status_json: bool) {
-    for action in actions {
-        match action {
-            UcAction::Send(packet) => { let _ = tx.send(packet); }
-            UcAction::SetInside(inside, edge, along) => {
-                ffi::UcBridge::set_inside(inside,edge,along);
-                if !inside { ffi::UcBridge::release(); }
-            }
-            UcAction::Status(status) if status_json => emit_status(StatusEvent::Uc {status}),
-            UcAction::Status(_) => {}
-        }
-    }
-}
-
-fn apply_commands(command: &UcCommand, applied: &mut UcCommand, previous_mode: &mut Mode,
-    context: &ModeContext<'_>, router: &mut InputRouter<'_>, state: &mut UcState,
-    tx: &mpsc::UnboundedSender<Packet>) -> Result<(), ()> {
-    if command.edge != applied.edge {
-        dispatch_uc(state.on_edge(command.edge),tx,context.status_json);
-        applied.edge = command.edge;
-    }
-    if command.enable_revision != applied.enable_revision {
-        applied.enable_revision = command.enable_revision;
-        applied.enabled = command.enabled;
-        if let Some(enabled) = command.enabled {
-            if enabled && router.mode() != Mode::AndroidControl {
-                *previous_mode = router.mode();
-                context.apply_mode(Mode::AndroidControl,ModeOrigin::Host,router,state,tx)?;
-            } else if !enabled && router.mode() == Mode::AndroidControl {
-                context.apply_mode(*previous_mode,ModeOrigin::Host,router,state,tx)?;
-            }
-        }
-    }
-    if command.return_revision != applied.return_revision {
-        applied.return_revision = command.return_revision;
-        dispatch_uc(state.return_to_mac(),tx,context.status_json);
-    }
-    Ok(())
-}
-
-fn read_commands(mut reader: impl std::io::BufRead, tx: watch::Sender<UcCommand>) {
-    let mut line = Vec::new();
-    let mut overflow = false;
+fn wait_for_stdin_eof(mut reader: impl std::io::Read) {
+    let mut buffer = [0u8; 4096];
     loop {
-        let buffer = match reader.fill_buf() {
-            Ok(buffer) => buffer,
-            Err(error) => { emit_status(StatusEvent::Error {message:format!("stdin: {error}")}); break; }
-        };
-        let eof = buffer.is_empty();
-        let consumed = buffer.len();
-        for &byte in buffer {
-            if byte == b'\n' {
-                submit_command(&line,overflow,&tx); line.clear(); overflow = false;
-            } else if line.len() < 4095 { line.push(byte); } else { overflow = true; }
+        match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {} // Legacy command input is ignored; parent polling handles shutdown.
         }
-        if eof {
-            if !line.is_empty() || overflow { submit_command(&line,overflow,&tx); }
-            break;
-        }
-        reader.consume(consumed);
-    }
-}
-fn submit_command(line:&[u8], overflow:bool, tx:&watch::Sender<UcCommand>) {
-    let parsed = if overflow { Err("stdin command exceeded 4 KiB".into()) }
-        else { std::str::from_utf8(line).map_err(|_| "stdin command is not UTF-8".into()).and_then(uc::parse_command) };
-    match parsed {
-        Ok(command) => { tx.send_modify(|settings| settings.apply(command)); }
-        Err(message) => emit_status(StatusEvent::Error {message}),
     }
 }

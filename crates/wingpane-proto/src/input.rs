@@ -43,6 +43,7 @@ pub enum InputEvent {
     /// Committed UTF-8 text; appended as input tag 7 (maximum 256 UTF-8 bytes).
     Text(alloc::string::String),
     /// Host-side precise scroll with trackpad phase; appended as input tag 8.
+    /// reserved: Universal Control removed 2026-11-28
     PreciseScroll {
         dx: f32,
         dy: f32,

@@ -1,5 +1,7 @@
 # 07 - Kế Hoạch Triển Khai: Universal Control cho Android
 
+> **ĐÃ HUỶ 2026-11-28.** Thử thật trên SM-X710: con trỏ giật, click trái/phải không ăn → anh Lâm chốt cắt tính năng, xoá code (daemon, bridge, app Mac, Android). Giữ định nghĩa protocol (Mode::AndroidControl, Uc*, Clipboard) làm reserved để không đổi tag. Tài liệu dưới đây chỉ còn giá trị lịch sử.
+
 Phạm vi: tính năng mới **"Universal Control for Android"** — rê chuột/trackpad thật của Mac qua một cạnh màn hình thì con trỏ *đi vào tablet Android*; lúc đó chuột + bàn phím Mac điều khiển chính hệ điều hành Android (Chrome, Zalo, Settings…), giống hai máy Mac dùng chung chuột. Rê ngược qua cạnh → trả quyền về Mac. Khác hẳn Display mode (màn ảo của Mac): ở đây đích là UI Android, không có màn ảo. Host: macOS (`wingpaned` + `macos-bridge` + `Wingpane.app`). Client: Galaxy Tab S9 (SM-X710, Android 14). Kết nối: USB `adb reverse tcp:7788`, giao thức postcard hiện có. Không gồm Wi‑Fi, Windows host, Bluetooth HID.
 
 Ký hiệu file giữ như docs/06: `proto/` = `crates/wingpane-proto/src/`, `wpd/` = `apps/desktop/wingpaned/src/`, `bridge/` = `apps/desktop/macos-bridge/Sources/WingpaneBridge/`, `macapp/` = `apps/desktop/mac-app/Sources/`, `and/` = `apps/android/app/src/main/java/io/wingpane/`, `andres/` = `apps/android/app/src/main/res/`, `andt/` = `apps/android/app/src/test/java/io/wingpane/`.

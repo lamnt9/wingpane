@@ -9,14 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = PermissionsChecker.hasScreenRecordingPermission()
         _ = PermissionsChecker.hasAccessibilityPermission(prompt: false)
-        _ = PermissionsChecker.hasInputMonitoringPermission()
         // Start immediately: the daemon just waits until a phone is connected (decided 2026-11-25).
         _ = controller?.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         controller?.stop()
-        CursorSafety.restore()
     }
 }
 
@@ -27,7 +25,6 @@ struct WingpaneApp: App {
     @StateObject private var controller: DaemonController
     @State private var screenRecordingGranted: Bool = PermissionsChecker.hasScreenRecordingPermission()
     @State private var accessibilityGranted: Bool = PermissionsChecker.hasAccessibilityPermission(prompt: false)
-    @State private var inputMonitoringGranted: Bool = PermissionsChecker.hasInputMonitoringPermission()
     @State private var launchAtLoginEnabled: Bool = (SMAppService.mainApp.status == .enabled)
     // Re-renders the menu when the language changes; L(...) reads the same UserDefaults key.
     @AppStorage(AppLanguage.defaultsKey) private var languageRaw: String = AppLanguage.en.rawValue
@@ -82,38 +79,6 @@ struct WingpaneApp: App {
 
         Divider()
 
-        Menu(L("Control Android", "Điều khiển Android")) {
-            Button(statusModel.isUcEnabled ? L("Enabled ✓", "Đang bật ✓") : L("Enabled", "Bật")) {
-                controller.send(command: .ucEnable(!statusModel.isUcEnabled))
-            }
-            .disabled(statusModel.ucState == .unavailable)
-
-            Menu(L("Edge", "Cạnh")) {
-                ForEach(UcEdge.allCases, id: \.self) { edge in
-                    let isCurrent = (controller.options.ucEdge == edge)
-                    Button(isCurrent ? "\(edge.displayTitle) ✓" : edge.displayTitle) {
-                        var updated = controller.options
-                        updated.ucEdge = edge
-                        controller.setOptions(updated)
-                    }
-                }
-            }
-
-            if statusModel.ucState == .inside {
-                Button(L("Return to Mac now", "Trả chuột về Mac ngay")) {
-                    controller.send(command: .ucReturn)
-                }
-            }
-
-            Divider()
-
-            Text(L("Ctrl+⌥+Esc: always returns the pointer to Mac", "Ctrl+⌥+Esc: luôn trả chuột về Mac"))
-                .disabled(true)
-
-            Text(statusModel.ucStatusText)
-                .disabled(true)
-        }
-
         Menu(L("Options", "Tuỳ chọn")) {
             Button(controller.options.hidpi ? "HiDPI ✓" : "HiDPI") {
                 var updated = controller.options
@@ -143,17 +108,12 @@ struct WingpaneApp: App {
             // Daemon-reported state wins: macOS grants are per process and the daemon does the injecting.
             let screenOK = statusModel.daemonScreenRecording ?? screenRecordingGranted
             let accessOK = statusModel.daemonInputTrusted ?? accessibilityGranted
-            let inputMonitorOK = statusModel.daemonInputMonitoring ?? inputMonitoringGranted
             Button(L("Screen Recording", "Ghi màn hình") + (screenOK ? " ✓" : " ✗")) {
                 openSettingsOnce(PermissionsChecker.screenRecordingSettingsURL)
             }
 
             Button(L("Accessibility", "Trợ năng") + (accessOK ? " ✓" : " ✗")) {
                 openSettingsOnce(PermissionsChecker.accessibilitySettingsURL)
-            }
-
-            Button(L("Input Monitoring", "Theo dõi đầu vào") + (inputMonitorOK ? " ✓" : " ✗")) {
-                openSettingsOnce(PermissionsChecker.inputMonitoringSettingsURL)
             }
         }
 
@@ -185,7 +145,6 @@ struct WingpaneApp: App {
 
         Button(L("Quit Wingpane", "Thoát Wingpane")) {
             controller.stop()
-            CursorSafety.restore()
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: .command)
@@ -240,7 +199,6 @@ struct WingpaneApp: App {
     private func refreshPermissions() {
         screenRecordingGranted = PermissionsChecker.hasScreenRecordingPermission()
         accessibilityGranted = PermissionsChecker.hasAccessibilityPermission(prompt: false)
-        inputMonitoringGranted = PermissionsChecker.hasInputMonitoringPermission()
     }
 
     private func toggleLaunchAtLogin() {
