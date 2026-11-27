@@ -119,6 +119,8 @@ https://github.com/lamnt9/wingpane</string>
     <string name="panel_numpad">Bàn phím số</string>
     <string name="panel_ime">IME</string>
     <string name="panel_done">Xong</string>
+    <string name="trackpad_left">Trái</string>
+    <string name="trackpad_right">Phải</string>
     <string name="reconnecting_short">Đang kết nối lại</string>
     <string name="reconnecting_seconds_format">%1$ds / 10s</string>
     <string name="state_version_unknown">Mac của bạn dùng phiên bản protocol khác, ứng dụng này dùng v1.</string>

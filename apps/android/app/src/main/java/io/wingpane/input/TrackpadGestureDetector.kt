@@ -101,4 +101,6 @@ class TrackpadGestureDetector(private val gainK: Float = 0.8f, private val tapSl
     }
     private fun distance(p: List<PointerSample>): Float = if (p.size < 2) 0f else hypot(p[0].x-p[1].x,p[0].y-p[1].y)
     companion object { const val TAP_MS=180L; const val DOUBLE_TAP_MS=300L; const val TAP_SLOP_DP=8f; const val INERTIA_MS=325L; const val PINCH_STEP=0.15f }
+    private var buttonHeld = false
+    fun setButtonHeld(held: Boolean) { buttonHeld = held }
 }
