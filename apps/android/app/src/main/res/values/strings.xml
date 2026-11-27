@@ -138,6 +138,8 @@ https://github.com/lamnt9/wingpane</string>
     <string name="panel_numpad">Numpad</string>
     <string name="panel_ime">IME</string>
     <string name="panel_done">Done</string>
+    <string name="trackpad_left">Left</string>
+    <string name="trackpad_right">Right</string>
     <string name="reconnecting_short">Reconnecting</string>
     <string name="reconnecting_seconds_format">%1$ds / 10s</string>
     <string name="state_version_unknown">Your Mac uses a different protocol version, this app v1.</string>

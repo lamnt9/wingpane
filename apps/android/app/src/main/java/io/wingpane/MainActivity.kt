@@ -185,10 +185,7 @@ class MainActivity : ComponentActivity() {
                     contentAlignment = Alignment.Center,
                 ) {
                     val ratio = videoAspectRatio
-                    val surfaceModifier = if (mode == Mode.TrackpadKeyboard) {
-                        // Trackpad mode: Mac screen on top, pad + keyboard below.
-                        Modifier.align(Alignment.TopCenter).fillMaxWidth().fillMaxHeight(0.42f)
-                    } else if (lockAspectRatio && ratio != null && ratio > 0f) {
+                    val surfaceModifier = if (lockAspectRatio && ratio != null && ratio > 0f) {
                         Modifier
                             .fillMaxSize()
                             .aspectRatio(ratio, matchHeightConstraintsFirst = false)
@@ -197,40 +194,42 @@ class MainActivity : ComponentActivity() {
                     }
 
                     // Existing SurfaceView (DEFAULT z-order, do not change)
-                    AndroidView(
-                        factory = { context ->
-                            SurfaceView(context).apply {
-                                holder.addCallback(object : SurfaceHolder.Callback {
-                                    override fun surfaceCreated(holder: SurfaceHolder) {
-                                        decoder.setSurface(holder.surface)
-                                    }
+                    if (mode != Mode.TrackpadKeyboard) {
+                        AndroidView(
+                            factory = { context ->
+                                SurfaceView(context).apply {
+                                    holder.addCallback(object : SurfaceHolder.Callback {
+                                        override fun surfaceCreated(holder: SurfaceHolder) {
+                                            decoder.setSurface(holder.surface)
+                                        }
 
-                                    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                                        decoder.setSurface(holder.surface)
-                                    }
+                                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                                            decoder.setSurface(holder.surface)
+                                        }
 
-                                    override fun surfaceDestroyed(holder: SurfaceHolder) {
-                                        decoder.setSurface(null)
-                                    }
-                                })
-                                setOnTouchListener { view, event -> handleTouch(view, event) }
-                                setOnGenericMotionListener { view, event ->
-                                    when (event.actionMasked) {
-                                        MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT ->
-                                            if (hostSupportsPen()) handleStylus(view, event, hover = true) else false
-                                        else -> false
+                                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                            decoder.setSurface(null)
+                                        }
+                                    })
+                                    setOnTouchListener { view, event -> handleTouch(view, event) }
+                                    setOnGenericMotionListener { view, event ->
+                                        when (event.actionMasked) {
+                                            MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT ->
+                                                if (hostSupportsPen()) handleStylus(view, event, hover = true) else false
+                                            else -> false
+                                        }
                                     }
                                 }
-                            }
-                        },
-                        modifier = surfaceModifier,
-                    )
+                            },
+                            modifier = surfaceModifier,
+                        )
+                    }
 
                     when (mode) {
                         Mode.GraphicsTablet -> if (uiModel.isStreamScreen) PenCanvasScreen(onStylus = { event, view ->
                             if (hostSupportsPen()) handleStylus(view, event, hover = event.actionMasked in setOf(MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_EXIT)) else false
                         })
-                        Mode.TrackpadKeyboard -> if (uiModel.isStreamScreen) TrackpadScreen(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.58f), detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
+                        Mode.TrackpadKeyboard -> if (uiModel.isStreamScreen) TrackpadScreen(modifier = Modifier.fillMaxSize(), detector = trackpadDetector, onEvents = { events -> events.forEach { event ->
                             val allowed = when (event) {
                                 is InputEvent.Keyboard -> hostCapabilitiesReceived && (hostFeatures and (1 shl 3)) != 0
                                 is InputEvent.Text -> hostCapabilitiesReceived && (hostFeatures and (1 shl 4)) != 0
