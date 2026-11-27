@@ -197,6 +197,12 @@ pub enum GestureKind {
 
 Protocol vẫn giữ `PROTO_VERSION = 1`; mọi biến thể mới chỉ nối cuối enum. `Mode::AndroidControl` là tag 3. Các control tag 11–14 lần lượt là `UcConfig`, `UcEnter`, `UcExit`, `UcStatus`; input tag 8 là `PreciseScroll`. `UcEdge` tags 0..3 = Left/Right/Top/Bottom; `UcExitReason` tags 0..8 = CursorReturned, Hotkey, ModeChanged, ClientNotReady, TapDisabled, Watchdog, SecureInput, MacLocked, SessionEnded. `ScrollPhase` tags 0..4 = Discrete, Began, Changed, Ended, Momentum.
 
+| Control tag | Message | Direction | Limit |
+|---|---|---|---|
+| 15 | `Clipboard { text: String }` | host ↔ client | UTF-8 ≤ 64 KiB; larger messages are dropped without truncation |
+
+Capabilities bit 9 is `CLIPBOARD_TEXT` and is advertised only with bit 8 `UNIVERSAL_CONTROL`. Mac sends clipboard text on UC entry when pasteboard `changeCount` differs from its last send. Android sends clipboard text through the notification action after its Activity gains focus.
+
 `along` nằm trong 0..1 dọc cạnh; `ime_hint`: 0 unknown, 1 latin, 2 vietnamese. `UcStatus.flags` bit 0..5 lần lượt là SERVICE_CONNECTED, GESTURES_OK, IME_CONNECTION, KEYGUARD_LOCKED, FGS_RUNNING, OVERLAY_SHOWN. UC-ready yêu cầu bit 0, 1, 4 và không có bit 3.
 
 Capabilities bit 8 là `UNIVERSAL_CONTROL`; không gửi AndroidControl, Uc*, PreciseScroll hay Input host→client đến peer chưa công bố bit này. `Accept.selected_mode` không dùng AndroidControl. Bit 8 được định nghĩa trong schema nhưng chưa được daemon quảng bá ở U0.

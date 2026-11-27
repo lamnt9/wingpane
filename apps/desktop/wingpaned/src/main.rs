@@ -16,7 +16,7 @@ use tokio::{
     task::JoinSet,
 };
 use wingpane_core::{session::Session, transport::tcp::FramedTcp};
-use wingpane_proto::{ControlMessage, Mode, Packet, RejectReason, TouchPhase, VideoPacket, UcEdge, FEATURE_UNIVERSAL_CONTROL};
+use wingpane_proto::{ControlMessage, Mode, Packet, RejectReason, TouchPhase, VideoPacket, UcEdge, FEATURE_UNIVERSAL_CONTROL, FEATURE_CLIPBOARD_TEXT};
 use wingpaned::{
     busy_rejection, display_transition, should_send_video, DisplayTransition, EncodedFrame, FrameQueue, InputRouter, InputSink, SessionResources,
 };
@@ -1122,7 +1122,7 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                 }
                 Some((event, now_us)) = uc_rx.recv() => {
                     if let Some(event) = ffi::UcBridge::event(event, now_us) {
-                        dispatch_uc(uc_state.on_bridge(event), &control_tx, status_json);
+                        dispatch_uc(uc_state.on_bridge_with_clipboard(event, &mut ffi::NativeClipboard), &control_tx, status_json);
                     }
                     None
                 }
@@ -1236,8 +1236,8 @@ async fn run_session(stream: TcpStream, opts: Options, status_json: bool, mut co
                         input_router.set_pen_config(pressure_curve, target);
                         continue;
                     }
-                    ControlMessage::UcExit {..} | ControlMessage::UcStatus {..} => {
-                        dispatch_uc(uc_state.on_client(message), &control_tx, status_json);
+                    ControlMessage::UcExit {..} | ControlMessage::UcStatus {..} | ControlMessage::Clipboard {..} => {
+                        dispatch_uc(uc_state.on_client_with_clipboard(message, &mut ffi::NativeClipboard), &control_tx, status_json);
                         continue;
                     }
                     ControlMessage::Capabilities { features } => {
@@ -1417,7 +1417,16 @@ impl Drop for AbortTask { fn drop(&mut self) { self.0.abort(); } }
 
 fn host_features(input_trusted: bool, uc_available: bool) -> u32 {
     HOST_INPUT_FEATURES | if input_trusted {1<<6} else {0}
-        | if uc_available && input_trusted {FEATURE_UNIVERSAL_CONTROL} else {0}
+        | if uc_available && input_trusted {FEATURE_UNIVERSAL_CONTROL | FEATURE_CLIPBOARD_TEXT} else {0}
+}
+
+#[cfg(test)]
+#[test]
+fn clipboard_feature_is_advertised_only_with_universal_control() {
+    let both = FEATURE_UNIVERSAL_CONTROL | FEATURE_CLIPBOARD_TEXT;
+    assert_eq!(host_features(false, true) & both, 0);
+    assert_eq!(host_features(true, false) & both, 0);
+    assert_eq!(host_features(true, true) & both, both);
 }
 
 fn dispatch_uc(actions: Vec<UcAction>, tx: &mpsc::UnboundedSender<Packet>, status_json: bool) {

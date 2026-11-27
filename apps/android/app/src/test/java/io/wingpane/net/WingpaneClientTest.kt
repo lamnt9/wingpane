@@ -22,6 +22,8 @@ class WingpaneClientTest {
     @Test fun clientCapabilitiesIncludeUniversalControlOnlyWhenEnabled() {
         assertEquals(0u, clientFeatures(false) and (1u shl 8))
         assertEquals(1u shl 8, clientFeatures(true) and (1u shl 8))
+        assertEquals(0u, clientFeatures(false) and (1u shl 9))
+        assertEquals(1u shl 9, clientFeatures(true) and (1u shl 9))
     }
 
     @Test fun advertisedCapabilitiesCarryBitEightWhenEnabled() = runTest {

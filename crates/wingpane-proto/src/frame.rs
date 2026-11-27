@@ -5,7 +5,7 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_FRAME_LEN: u32 = 8 * 1024 * 1024;
-pub const LAST_CONTROL_TAG: u64 = 14;
+pub const LAST_CONTROL_TAG: u64 = 15;
 pub const LAST_INPUT_TAG: u64 = 8;
 
 /// Video frame packet delivered over transport.
@@ -46,6 +46,9 @@ impl fmt::Display for FrameError {
 }
 
 pub fn encode_frame(p: &Packet, out: &mut Vec<u8>) -> Result<(), FrameError> {
+    if matches!(p, Packet::Control(ControlMessage::Clipboard { text }) if text.len() > 64 * 1024) {
+        return Err(FrameError::Encode);
+    }
     if matches!(p, Packet::Input(InputPacket { event: InputEvent::Text(text), .. }) if text.len() > 256)
     {
         return Err(FrameError::Encode);
@@ -95,6 +98,7 @@ impl FrameDecoder {
         self.bytes.extend_from_slice(incoming);
     }
     pub fn next_packet(&mut self) -> Result<Option<Packet>, FrameError> {
+      loop {
         if let Some(e) = self.failed.clone() {
             return Err(e);
         }
@@ -137,7 +141,12 @@ impl FrameDecoder {
             self.bytes.drain(..self.cursor);
             self.cursor = 0;
         }
-        decoded
+        // A clipboard payload over the negotiated text limit is a dropped
+        // message, not a malformed connection. Continue with the next frame.
+        if matches!(&decoded, Ok(Packet::Control(ControlMessage::Clipboard { text })) if text.len() > 64 * 1024) {
+            continue;
+        }
+        return decoded
             .and_then(|packet| {
                 if matches!(&packet, Packet::Input(InputPacket { event: InputEvent::Text(text), .. }) if text.len() > 256) {
                     Err(FrameError::Decode)
@@ -145,7 +154,8 @@ impl FrameDecoder {
                     Ok(packet)
                 }
             })
-            .map(Some)
+            .map(Some);
+      }
     }
 }
 

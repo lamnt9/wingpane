@@ -4,6 +4,7 @@
     <string name="uc_notification_text">Mac đang điều khiển tablet</string>
     <string name="uc_action_display">Về Display</string>
     <string name="uc_action_return_mouse">Trả chuột cho Mac</string>
+    <string name="uc_action_send_clipboard">Gửi clipboard sang Mac</string>
     <string name="uc_accessibility_service_name">Điều khiển Android bằng Wingpane</string>
     <string name="uc_accessibility_service_description">Cho phép máy tính đã kết nối điều khiển chạm và cử chỉ trên máy tính bảng. Một số ứng dụng ngân hàng có thể chặn khi bật dịch vụ Trợ năng.</string>
     <string name="hud_mode_android">Android</string>

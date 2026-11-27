@@ -61,6 +61,9 @@ class UcForegroundService : Service() {
         val release = PendingIntent.getService(this, 1,
             Intent(this, UcForegroundService::class.java).setAction(ACTION_RETURN_MOUSE),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val sendClipboard = PendingIntent.getActivity(this, 2,
+            Intent(this, ClipboardSendActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.mipmap.ic_wingpane_launcher)
             .setContentTitle(getString(R.string.uc_notification_title))
@@ -68,6 +71,7 @@ class UcForegroundService : Service() {
             .setContentIntent(open)
             .addAction(0, getString(R.string.uc_action_display), open)
             .addAction(0, getString(R.string.uc_action_return_mouse), release)
+            .addAction(0, getString(R.string.uc_action_send_clipboard), sendClipboard)
             .setOngoing(true)
             .build()
     }

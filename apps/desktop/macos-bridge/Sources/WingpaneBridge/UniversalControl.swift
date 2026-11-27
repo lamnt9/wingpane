@@ -1,9 +1,38 @@
 import Foundation
+import AppKit
 import CoreGraphics
 import ApplicationServices
 import Carbon
 import Darwin
 import WingpaneUcSupport
+
+@_cdecl("wp_uc_pasteboard_change_count")
+public func wp_uc_pasteboard_change_count() -> Int64 {
+    Int64(NSPasteboard.general.changeCount)
+}
+
+/// Returns UTF-8 byte count, or -1 when the pasteboard has no plain string.
+/// A short buffer receives no bytes; callers can query with a nil buffer first.
+@_cdecl("wp_uc_pasteboard_get")
+public func wp_uc_pasteboard_get(_ buffer: UnsafeMutablePointer<UInt8>?, _ len: Int) -> Int {
+    guard let text = NSPasteboard.general.string(forType: .string) else { return -1 }
+    let bytes = Array(text.utf8)
+    if let buffer, len >= bytes.count {
+        bytes.withUnsafeBufferPointer { source in
+            if let base = source.baseAddress { buffer.update(from: base, count: bytes.count) }
+        }
+    }
+    return bytes.count
+}
+
+@_cdecl("wp_uc_pasteboard_set")
+public func wp_uc_pasteboard_set(_ ptr: UnsafePointer<UInt8>?, _ len: Int) -> Bool {
+    guard len >= 0, len <= 64 * 1024, let ptr,
+          let text = String(bytes: UnsafeBufferPointer(start: ptr, count: len), encoding: .utf8) else { return false }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    return pasteboard.setString(text, forType: .string)
+}
 
 public typealias WPUcEvent = UcEventRecord
 public typealias WPUcCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void

@@ -1,7 +1,7 @@
 //! Pure Universal Control policy. No sockets, native APIs, or wall-clock reads.
 use serde::{Deserialize, Serialize};
 use wingpane_proto::{ControlMessage, InputEvent, InputPacket, Mode, Packet, ScrollPhase, UcEdge,
-    UcExitReason, FEATURE_UNIVERSAL_CONTROL, UC_STATUS_SERVICE_CONNECTED, UC_STATUS_GESTURES_OK,
+    UcExitReason, FEATURE_UNIVERSAL_CONTROL, FEATURE_CLIPBOARD_TEXT, UC_STATUS_SERVICE_CONNECTED, UC_STATUS_GESTURES_OK,
     UC_STATUS_FGS_RUNNING, UC_STATUS_KEYGUARD_LOCKED};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,6 +149,12 @@ pub fn reason_name(reason: UcExitReason) -> &'static str {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum UcAction { Send(Packet), SetInside(bool, UcEdge, f32), Status(UcStatusJson) }
+/// The native pasteboard stays behind this port so UC policy can use a fake.
+pub trait ClipboardPort {
+    fn change_count(&self) -> i64;
+    fn get_text(&self) -> Option<String>;
+    fn set_text(&mut self, text: &str) -> bool;
+}
 #[derive(Debug, Clone)]
 pub enum BridgeEvent {
     Moved { x:f32, y:f32, dx:f32, dy:f32, buttons_down:bool, now_ms:u64 },
@@ -166,6 +172,8 @@ pub struct UcState {
     mode: Mode,
     tap_ok: bool,
     peer_uc: bool,
+    peer_clipboard: bool,
+    last_sent_change_count: Option<i64>,
     client_flags: u32,
     secure_input: bool,
     pending_enter: bool,
@@ -178,7 +186,7 @@ pub struct UcState {
 impl UcState {
     pub fn new(edge: UcEdge, displays: Vec<Rect>) -> Self {
         Self { detector:EdgeDetector::new(edge,displays), phase:UcPhase::Unavailable,
-            mode:Mode::ExtendedDisplay, tap_ok:false, peer_uc:false, client_flags:0, secure_input:false,
+            mode:Mode::ExtendedDisplay, tap_ok:false, peer_uc:false, peer_clipboard:false, last_sent_change_count:None, client_flags:0, secure_input:false,
             pending_enter:false, pending_exit:false, along:0.5, modifiers:0, seq:0, deltas:DeltaCoalescer::default() }
     }
     pub fn negotiated(&self) -> bool { self.tap_ok && self.peer_uc }
@@ -211,7 +219,9 @@ impl UcState {
     }
     pub fn on_capabilities(&mut self, features:u32, tap_ok:bool) -> Vec<UcAction> {
         let was_negotiated = self.negotiated();
-        self.peer_uc = features & FEATURE_UNIVERSAL_CONTROL != 0; self.tap_ok = tap_ok;
+        self.peer_uc = features & FEATURE_UNIVERSAL_CONTROL != 0;
+        self.peer_clipboard = self.peer_uc && features & FEATURE_CLIPBOARD_TEXT != 0;
+        self.tap_ok = tap_ok;
         let mut out = if !self.negotiated() { self.exit(UcExitReason::ClientNotReady,false) } else {vec![]};
         if !was_negotiated && self.negotiated() { out.push(UcAction::Send(Packet::Control(ControlMessage::UcConfig {edge:self.detector.edge}))); }
         self.finish(out,None)
@@ -237,6 +247,30 @@ impl UcState {
             }
             _ => vec![],
         }
+    }
+    pub fn on_client_with_clipboard(&mut self, msg: ControlMessage, clipboard: &mut impl ClipboardPort) -> Vec<UcAction> {
+        if let ControlMessage::Clipboard { text } = &msg {
+            if self.peer_clipboard && text.len() <= 64 * 1024 && clipboard.set_text(text) {
+                self.last_sent_change_count = Some(clipboard.change_count());
+            }
+            return vec![];
+        }
+        self.on_client(msg)
+    }
+    pub fn on_bridge_with_clipboard(&mut self, ev: BridgeEvent, clipboard: &mut impl ClipboardPort) -> Vec<UcAction> {
+        let entered = matches!(ev, BridgeEvent::Entered { .. });
+        let mut actions = self.on_bridge(ev);
+        if entered && self.phase == UcPhase::Inside && self.peer_clipboard
+            && actions.iter().any(|a| matches!(a, UcAction::Send(Packet::Control(ControlMessage::UcEnter { .. })))) {
+            let change_count = clipboard.change_count();
+            if self.last_sent_change_count != Some(change_count) {
+                if let Some(text) = clipboard.get_text().filter(|text| text.len() <= 64 * 1024) {
+                    actions.insert(0, UcAction::Send(Packet::Control(ControlMessage::Clipboard { text })));
+                    self.last_sent_change_count = Some(change_count);
+                }
+            }
+        }
+        actions
     }
     pub fn on_edge(&mut self, edge:UcEdge) -> Vec<UcAction> {
         let mut out = self.exit(UcExitReason::ModeChanged,true);
@@ -521,6 +555,13 @@ use serde_json::{json,Value};
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct FakeClipboard { count: i64, text: Option<String>, writes: Vec<String> }
+    impl ClipboardPort for FakeClipboard {
+        fn change_count(&self) -> i64 { self.count }
+        fn get_text(&self) -> Option<String> { self.text.clone() }
+        fn set_text(&mut self, text: &str) -> bool { self.count += 1; self.text = Some(text.to_owned()); self.writes.push(text.to_owned()); true }
+    }
+    fn fake_clipboard() -> FakeClipboard { FakeClipboard { count: 1, text: Some("Tiếng Việt 😀".into()), writes: vec![] } }
     fn main_rect() -> Rect { Rect {x:0.0,y:0.0,width:1000.0,height:800.0} }
     fn detector(edge:UcEdge) -> EdgeDetector { EdgeDetector::new(edge,vec![main_rect()]) }
     fn ready() -> u32 { UC_STATUS_SERVICE_CONNECTED | UC_STATUS_GESTURES_OK | UC_STATUS_FGS_RUNNING }
@@ -534,6 +575,55 @@ mod tests {
     fn inside() -> UcState { let mut s=armed(); push(&mut s); s.on_bridge(BridgeEvent::Entered {ime_hint:2}); s }
     fn controls(actions: &[UcAction]) -> Vec<ControlMessage> {
         actions.iter().filter_map(|a| match a {UcAction::Send(Packet::Control(m))=>Some(m.clone()),_=>None}).collect()
+    }
+    #[test]
+    fn clipboard_is_sent_on_enter_only_when_change_count_changes() {
+        let mut s = armed();
+        s.on_capabilities(FEATURE_UNIVERSAL_CONTROL | FEATURE_CLIPBOARD_TEXT, true);
+        let mut clipboard = fake_clipboard();
+        push(&mut s);
+        assert_eq!(controls(&s.on_bridge_with_clipboard(BridgeEvent::Entered {ime_hint:2}, &mut clipboard)), vec![
+            ControlMessage::Clipboard {text:"Tiếng Việt 😀".into()},
+            ControlMessage::UcEnter {edge:UcEdge::Right,along:0.25,ime_hint:2},
+        ]);
+        s.on_bridge_with_clipboard(BridgeEvent::Exited(UcExitReason::CursorReturned), &mut clipboard);
+        push(&mut s);
+        assert_eq!(controls(&s.on_bridge_with_clipboard(BridgeEvent::Entered {ime_hint:2}, &mut clipboard)), vec![
+            ControlMessage::UcEnter {edge:UcEdge::Right,along:0.25,ime_hint:2},
+        ]);
+        s.on_bridge_with_clipboard(BridgeEvent::Exited(UcExitReason::CursorReturned), &mut clipboard);
+        clipboard.count += 1;
+        push(&mut s);
+        assert_eq!(controls(&s.on_bridge_with_clipboard(BridgeEvent::Entered {ime_hint:2}, &mut clipboard))[0], ControlMessage::Clipboard {text:"Tiếng Việt 😀".into()});
+        s.on_bridge_with_clipboard(BridgeEvent::Exited(UcExitReason::CursorReturned), &mut clipboard);
+        clipboard.count += 1;
+        clipboard.text = Some("é".repeat(32_769));
+        push(&mut s);
+        assert_eq!(controls(&s.on_bridge_with_clipboard(BridgeEvent::Entered {ime_hint:2}, &mut clipboard)).len(), 1);
+    }
+    #[test]
+    fn clipboard_from_client_sets_pasteboard_without_echo() {
+        let mut s = armed();
+        s.on_capabilities(FEATURE_UNIVERSAL_CONTROL | FEATURE_CLIPBOARD_TEXT, true);
+        let mut clipboard = fake_clipboard();
+        s.on_client_with_clipboard(ControlMessage::Clipboard {text:"Android 😀".into()}, &mut clipboard);
+        assert_eq!(clipboard.writes, vec!["Android 😀"]);
+        push(&mut s);
+        assert_eq!(controls(&s.on_bridge_with_clipboard(BridgeEvent::Entered {ime_hint:2}, &mut clipboard)).len(), 1);
+        s.on_client_with_clipboard(ControlMessage::Clipboard {text:"é".repeat(32_769)}, &mut clipboard);
+        assert_eq!(clipboard.writes.len(), 1);
+    }
+    #[test]
+    fn clipboard_requires_peer_bit_nine_and_universal_control() {
+        let mut s = armed();
+        let mut clipboard = fake_clipboard();
+        push(&mut s);
+        assert_eq!(controls(&s.on_bridge_with_clipboard(BridgeEvent::Entered {ime_hint:2}, &mut clipboard)).len(), 1);
+        s.on_client_with_clipboard(ControlMessage::Clipboard {text:"ignored".into()}, &mut clipboard);
+        assert!(clipboard.writes.is_empty());
+        s.on_capabilities(FEATURE_CLIPBOARD_TEXT, true);
+        s.on_client_with_clipboard(ControlMessage::Clipboard {text:"ignored".into()}, &mut clipboard);
+        assert!(clipboard.writes.is_empty());
     }
     #[test]
     fn right_edge_requires_push_in_window_and_no_buttons() {

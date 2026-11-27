@@ -13,6 +13,7 @@ enum class UcEdge { Left, Right, Top, Bottom }
 enum class UcExitReason { CursorReturned, Hotkey, ModeChanged, ClientNotReady, TapDisabled, Watchdog, SecureInput, MacLocked, SessionEnded }
 enum class ScrollPhase { Discrete, Began, Changed, Ended, Momentum }
 const val FEATURE_UNIVERSAL_CONTROL = 1 shl 8
+const val FEATURE_CLIPBOARD_TEXT = 1 shl 9
 const val UC_STATUS_SERVICE_CONNECTED = 1 shl 0
 const val UC_STATUS_GESTURES_OK = 1 shl 1
 const val UC_STATUS_IME_CONNECTION = 1 shl 2
@@ -65,6 +66,7 @@ sealed interface ControlMessage {
     data class UcEnter(val edge: UcEdge, val along: Float, val imeHint: UByte) : ControlMessage
     data class UcExit(val along: Float, val reason: UcExitReason) : ControlMessage
     data class UcStatus(val flags: UInt) : ControlMessage
+    data class Clipboard(val text: String) : ControlMessage
 }
 sealed interface Packet {
     data class Control(val message: ControlMessage) : Packet
@@ -75,6 +77,7 @@ sealed interface Packet {
 
 class FrameException(message: String, cause: Throwable? = null) : Exception(message, cause)
 private class UnknownPacketTag : Exception()
+private class OversizedClipboard : Exception()
 
 private class Writer {
     val out = ByteArrayOutputStream()
@@ -127,6 +130,7 @@ private object Codec {
         is ControlMessage.UcEnter->{w.varint(12u);w.varint(c.edge.ordinal.toULong());w.float(c.along);w.u8(c.imeHint)}
         is ControlMessage.UcExit->{w.varint(13u);w.float(c.along);w.varint(c.reason.ordinal.toULong())}
         is ControlMessage.UcStatus->{w.varint(14u);w.varint(c.flags.toULong())}
+        is ControlMessage.Clipboard->{if(c.text.toByteArray(Charsets.UTF_8).size>64*1024)throw FrameException("clipboard exceeds 64 KiB UTF-8");w.varint(15u);w.string(c.text)}
     }}
     private fun input(w:Writer,v:InputPacket){w.varint(v.seq.toULong());w.varint(v.tsUs);when(val e=v.event){
         is InputEvent.Pen->{w.varint(0u);w.float(e.x);w.float(e.y);w.float(e.pressure);w.i8(e.tiltX);w.i8(e.tiltY);w.bool(e.isDown);w.bool(e.isHover);w.u8(e.buttonMask);w.varint(e.timestampUs)}
@@ -148,7 +152,7 @@ private object Codec {
     }
     private fun mode(r:Reader)=Mode.entries[r.enum(0,3)]
     private fun codec(r:Reader)=VideoCodec.entries[r.enum(0,1)]
-    private fun decodeControl(r:Reader):ControlMessage=when(r.enum(0,14)){
+    private fun decodeControl(r:Reader):ControlMessage=when(r.enum(0,15)){
         0->{val ver=r.varint().toUShort();val name=r.string();val size=r.varint().toUInt() to r.varint().toUInt();val codecs=List(r.count()){codec(r)};ControlMessage.Hello(ver,name,size,codecs,r.varint().toUInt())}
         1->{val m=mode(r);val has=r.byte();val s=when(has){0->null;1->Triple(r.varint().toUInt(),r.varint().toUInt(),r.varint().toUInt());else->throw FrameException("invalid option")};ControlMessage.Accept(m,s,codec(r),r.varint().toUInt())}
         2->ControlMessage.SetMode(mode(r));3->ControlMessage.RequestKeyframe;4->ControlMessage.Ping(r.varint());5->ControlMessage.Pong(r.varint());6->ControlMessage.Disconnect
@@ -159,7 +163,9 @@ private object Codec {
         11->ControlMessage.UcConfig(UcEdge.entries[r.enum(0,3)])
         12->ControlMessage.UcEnter(UcEdge.entries[r.enum(0,3)],r.float(),r.byte().toUByte())
         13->ControlMessage.UcExit(r.float(),UcExitReason.entries[r.enum(0,8)])
-        else->ControlMessage.UcStatus(r.varint().toUInt())
+        14->ControlMessage.UcStatus(r.varint().toUInt())
+        15->r.string().let{if(it.toByteArray(Charsets.UTF_8).size>64*1024)throw OversizedClipboard();ControlMessage.Clipboard(it)}
+        else->throw FrameException("invalid control tag")
     }
     private fun decodeInput(r:Reader):InputPacket {val seq=r.varint().toUInt();val ts=r.varint();val e=when(r.enum(0,8)){
         0->InputEvent.Pen(r.float(),r.float(),r.float(),r.byte().toByte(),r.byte().toByte(),r.bool(),r.bool(),r.byte().toUByte(),r.varint())
@@ -195,6 +201,7 @@ class FrameDecoder {
         buffer=buffer.copyOfRange(4+len.toInt(),buffer.size)
         try { return Codec.decode(body) }
         catch (_: UnknownPacketTag) { skippedFrames++ }
+        catch (_: OversizedClipboard) { skippedFrames++ }
       }
     }
 }
